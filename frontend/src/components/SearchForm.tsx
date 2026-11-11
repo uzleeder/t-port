@@ -5,6 +5,7 @@ import { useEffect, useState, useTransition } from "react";
 import { LocationCombobox } from "./LocationCombobox";
 import { ModeIcon } from "./ModeIcon";
 import { buildSearchQuery, marketToday, MODE_LABEL } from "@/lib/format";
+import { searchDefaults, usePreferences } from "@/lib/preferences";
 import { ALL_MODES, type Location, type Mode } from "@/lib/types";
 
 interface Props {
@@ -28,9 +29,12 @@ export function SearchForm({
   // "Today" depends on the visitor's clock, so it is resolved after mount (not during prerender).
   const [date, setDate] = useState(initialDate ?? "");
   const [minDate, setMinDate] = useState("");
-  const [modes, setModes] = useState<Mode[]>(
-    initialModes && initialModes.length ? initialModes : ALL_MODES,
-  );
+  const [prefs] = usePreferences();
+  // null = not touched yet: follow the URL, then the user's saved default, then all modes.
+  const [touchedModes, setModes] = useState<Mode[] | null>(null);
+  const modes =
+    touchedModes ??
+    (initialModes && initialModes.length ? initialModes : prefs?.modes.length ? prefs.modes : ALL_MODES);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -43,7 +47,7 @@ export function SearchForm({
   }, []);
 
   function toggle(mode: Mode) {
-    setModes((ms) => (ms.includes(mode) ? ms.filter((m) => m !== mode) : [...ms, mode]));
+    setModes(modes.includes(mode) ? modes.filter((m) => m !== mode) : [...modes, mode]);
   }
 
   function submit(e: React.FormEvent) {
@@ -53,7 +57,14 @@ export function SearchForm({
     if (!date || (minDate && date < minDate)) return setError("Choose today or a future date.");
     if (modes.length === 0) return setError("Select at least one transport mode.");
     setError(null);
-    const qs = buildSearchQuery({ origin: origin.id, destination: destination.id, date, modes });
+    // A new search starts from the signed-in user's saved defaults (sort, changes, budget).
+    const qs = buildSearchQuery({
+      ...searchDefaults(prefs),
+      origin: origin.id,
+      destination: destination.id,
+      date,
+      modes,
+    });
     startTransition(() => router.push(`/search?${qs}`));
   }
 
@@ -70,7 +81,7 @@ export function SearchForm({
           name="origin"
           value={origin}
           onChange={setOrigin}
-          placeholder="City, e.g. Tashkent"
+          placeholder="City, district or region"
         />
         <button
           type="button"
@@ -88,7 +99,7 @@ export function SearchForm({
           name="destination"
           value={destination}
           onChange={setDestination}
-          placeholder="City, e.g. Samarkand"
+          placeholder="City, district or region"
         />
         <div>
           <label htmlFor="travel-date" className="mb-1 block text-xs font-medium text-muted">

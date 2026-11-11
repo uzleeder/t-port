@@ -40,8 +40,8 @@ class LocationOut(BaseModel):
     country_code: str
     region: str
     timezone: str
-    latitude: float
-    longitude: float
+    latitude: float | None
+    longitude: float | None
     aliases: list[str]
 
     @classmethod
@@ -123,14 +123,25 @@ class LegOut(BaseModel):
     arrival_local: str | None
     duration_minutes: int
     fares: list[FareOut]
-    freshness: str
+    freshness: str = Field(description="Worst of timetable and price freshness: fresh|stale|unknown|expired.")
+    timetable_freshness: str
+    price_freshness: str
+    price_type: str = Field(description="confirmed | indicative | estimated | demo")
+    provider: ProviderOut | None = Field(description="Source of this leg's data, with required attribution.")
     retrieved_at: datetime
     source_updated_at: datetime | None
 
     @classmethod
     def of(cls, leg: Leg, tz: str) -> LegOut:
         d = leg.departure
+        p = leg.provider
         return cls(
+            timetable_freshness=leg.timetable_freshness.value,
+            price_freshness=leg.price_freshness.value,
+            price_type=leg.price_type.value,
+            provider=ProviderOut(id=p.id, name=p.name, is_demo=p.is_demo, attribution=p.attribution)
+            if p
+            else None,
             mode=d.mode.value,
             operator=d.operator_name,
             service_code=d.service_code,
@@ -179,10 +190,14 @@ class JourneyOut(BaseModel):
     notes: list[str]
     legs: list[LegOut]
     transfer_checks: list[TransferCheckOut] = Field(default_factory=list)
+    price_type: str = Field(description="Least certain price type across legs.")
+    booking_note: str | None = Field(default=None, description="Why there is no booking link, if none.")
 
     @classmethod
     def of(cls, j: Journey, tz: str) -> JourneyOut:
         return cls(
+            price_type=j.price_type.value,
+            booking_note=j.booking_note,
             id=j.id,
             modes=[m.value for m in j.modes],
             transfers=j.transfers,
@@ -240,6 +255,9 @@ class QueryOut(BaseModel):
     max_price: Decimal | None
     depart_after: str | None = None
     depart_before: str | None = None
+    arrive_before: str | None = None
+    max_transfers: int = 1
+    prefer_modes: list[str] = []
 
 
 class SearchResponse(BaseModel):
@@ -268,6 +286,9 @@ class SearchResponse(BaseModel):
                 max_price=r.query.max_price,
                 depart_after=r.query.depart_after.strftime("%H:%M") if r.query.depart_after else None,
                 depart_before=r.query.depart_before.strftime("%H:%M") if r.query.depart_before else None,
+                arrive_before=r.query.arrive_before.strftime("%H:%M") if r.query.arrive_before else None,
+                max_transfers=r.query.max_transfers,
+                prefer_modes=sorted(m.value for m in r.query.prefer_modes),
             ),
             items=[JourneyOut.of(j, tz) for j in r.journeys],
             total=r.total,
@@ -292,6 +313,49 @@ class JourneyDetailResponse(BaseModel):
     journey: JourneyOut
     origin: LocationOut
     destination: LocationOut
+
+
+class BookingInfoOut(BaseModel):
+    """What the traveller needs to know before leaving T-Port for an operator's booking page."""
+
+    journey_id: str
+    bookable: bool
+    reason: str | None = Field(default=None, description="Why there is no booking link, if none.")
+    provider: ProviderOut | None = None
+    booking_host: str | None = Field(default=None, description="Site the traveller will be sent to.")
+    price: Decimal
+    price_max: Decimal | None
+    currency: str
+    price_type: str
+    price_retrieved_at: datetime | None
+    leg_journey_ids: list[str] = Field(
+        default_factory=list, description="For multi-leg journeys: book each leg separately."
+    )
+
+
+class CompareItemOut(BaseModel):
+    id: str
+    available: bool
+    reason: str | None = Field(default=None, description="Why the journey can't be shown, if not available.")
+    journey: JourneyOut | None = None
+    origin: LocationOut | None = None
+    destination: LocationOut | None = None
+
+
+class CompareBestOut(BaseModel):
+    """IDs of the best journey(s) per criterion; ties list every journey sharing the best value."""
+
+    cheapest: list[str]
+    fastest: list[str]
+    fewest_transfers: list[str]
+    earliest_departure: list[str]
+    earliest_arrival: list[str]
+
+
+class CompareResponse(BaseModel):
+    items: list[CompareItemOut]
+    best: CompareBestOut
+    caveats: list[str]
 
 
 class HealthResponse(BaseModel):

@@ -7,11 +7,12 @@ known. This module is replaced by the ``locations``/``stations`` tables in
 Milestone 3.
 """
 
+from app.data.administrative import administrative_locations
 from app.domain.models import Location, Station, StationKind
 
 TZ = "Asia/Tashkent"
 
-LOCATIONS: tuple[Location, ...] = (
+_CITIES: tuple[Location, ...] = (
     Location(
         "tashkent",
         "Tashkent",
@@ -20,7 +21,7 @@ LOCATIONS: tuple[Location, ...] = (
         TZ,
         41.2995,
         69.2401,
-        ("Toshkent", "Ташкент", "Tashkent City"),
+        ("Toshkent", "Ташкент", "Tashkent City", "Toshkent shahri"),
     ),
     Location(
         "samarkand", "Samarkand", "UZ", "Samarkand Region", TZ, 39.6542, 66.9597, ("Samarqand", "Самарканд")
@@ -40,6 +41,8 @@ LOCATIONS: tuple[Location, ...] = (
     ),
     Location("kokand", "Kokand", "UZ", "Fergana Region", TZ, 40.5286, 70.9425, ("Qo'qon", "Qoqon", "Коканд")),
 )
+
+LOCATIONS = _CITIES + administrative_locations(_CITIES, TZ)
 
 _RAIL = StationKind.RAIL_STATION
 _BUS = StationKind.BUS_TERMINAL
@@ -80,6 +83,6 @@ STATIONS: tuple[Station, ...] = (
     # Door-to-door points for on-demand services such as taxis.
     *(
         Station(f"{loc.id}-city", f"{loc.name} (door-to-door)", loc.id, StationKind.CITY_POINT)
-        for loc in LOCATIONS
+        for loc in _CITIES
     ),
 )

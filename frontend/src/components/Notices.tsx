@@ -12,6 +12,29 @@ export function DemoNotice() {
   );
 }
 
+/** Explains the reliability labels used on journey cards. */
+export function LabelsHelp() {
+  return (
+    <details className="rounded-xl border border-line px-4 py-2 text-sm text-muted">
+      <summary className="cursor-pointer text-ink">How to read prices and labels</summary>
+      <dl className="mt-2 grid gap-x-4 gap-y-1 sm:grid-cols-[auto_1fr]">
+        <dt className="text-ink">Confirmed price</dt>
+        <dd>A current price reported live by the provider.</dd>
+        <dt className="text-ink">Indicative price</dt>
+        <dd>A published fare or an earlier price; the operator&apos;s final price may differ.</dd>
+        <dt className="text-ink">Estimate</dt>
+        <dd>A range, e.g. for taxis. Agree the fare before you travel.</dd>
+        <dt className="text-ink">Demo data</dt>
+        <dd>Simulated for this pilot. Not real schedules or fares, and never bookable.</dd>
+        <dt className="text-ink">Data may be outdated</dt>
+        <dd>The source hasn&apos;t been refreshed recently. Check with the operator before travelling.</dd>
+        <dt className="text-ink">Update time unknown</dt>
+        <dd>The source didn&apos;t say when it last changed. Treat it like outdated data.</dd>
+      </dl>
+    </details>
+  );
+}
+
 export function StateMessage({
   title,
   children,

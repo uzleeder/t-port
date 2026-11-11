@@ -11,12 +11,13 @@ AI-assisted multimodal journey planning for Uzbekistan: compare trains, buses, f
 
 | Area | Implemented |
 |---|---|
-| Search | City autocomplete (English/Uzbek/Russian spellings), date, mode filters, sort by recommended / price / duration / departure, pagination |
+| Search | City autocomplete (English/Uzbek/Russian spellings), date, mode filters, changes (direct / 1 / 2), arrive-by time, budget, sort by recommended / price / duration / departure / fewest changes, pagination |
 | Results | Price and duration comparison, cheapest/fastest/earliest highlights, data source and freshness for every result, clear empty and error states |
-| Journeys | Detail pages with legs, fares, timestamps, provenance. One-transfer journeys with checked connection times |
-| Accounts | Register, sign in, sign out, dashboard, saved journeys, recent searches, account deletion |
-| AI assistant | Plain-language requests → validated search parameters → real results. Deterministic parser by default; optional LLM with fallback |
-| Booking | Redirects only to provider-allowed HTTPS hosts. None are configured (demo data is never bookable) |
+| Journeys | Detail pages with legs, fares, timestamps, provenance. Journeys with up to two changes from a bounded journey graph, checked connection times, overnight legs |
+| Compare | Pick 2–4 journeys (from results or saved journeys) and compare them side by side; best value per criterion and caveats |
+| Accounts | Register, sign in, sign out, dashboard, saved journeys, recent searches, saved search preferences, account deletion |
+| AI assistant | Plain-language requests (incl. arrival deadlines, changes, preferred modes, mode comparison) → validated search parameters → real results with an explanation built only from those results. Deterministic parser by default; optional LLM with fallback |
+| Booking | Explained hand-off page, then a re-validated redirect to a provider-allowed HTTPS host. No real provider is configured (demo data is never bookable); a fictional TEST provider exists for dev/e2e only |
 
 ## Repository layout
 
@@ -87,7 +88,19 @@ python -m app.cli import-demo --days 14   # snapshot demo data into the DB (TPOR
 ```
 
 ```bash
+python -m app.cli scheduler               # due provider imports + daily housekeeping (long-running)
+```
+
+```bash
+python -m app.cli import-provider demo    # one-off import; also: import-due, cancel-import <id>
+```
+
+```bash
 python -m app.cli check-provider demo     # provider contract conformance (exit 1 on violations)
+```
+
+```bash
+python deploy/smoke_test.py https://your.domain --ops-token TOKEN   # post-deployment verification
 ```
 
 ```bash
@@ -111,5 +124,8 @@ See [docs/deployment.md](docs/deployment.md) for HTTPS, managed PostgreSQL, logg
 - [Data sources](docs/providers.md): provider contracts, adapters and the checklist for adding real data
 - [Live-data readiness](docs/live-data-readiness.md): what the ingestion pipeline guarantees today
 - [Pilot runbook](docs/pilot-runbook.md): staging, go-live checklist, alerts, incidents, rollback
+- [Security review](docs/security-review.md), [Phase 2 audit](docs/phase2-audit.md) and [Phase 3 audit](docs/phase3-audit.md)
+- [Phase 3 architecture](docs/phase3-architecture.md), [beta readiness](docs/phase3-beta-readiness.md), [performance benchmarks](docs/performance-benchmarks.md)
+- [Provider integration status](docs/provider-integration-status.md): no authorized live provider yet; blockers and owners
 - [Security](docs/security.md): sessions, CSRF, data handling, known limitations
 - [Deployment](docs/deployment.md): production setup, HTTPS, backup and restore

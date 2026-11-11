@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, field_validator
 
-from app.ai.service import AssistantService, clarification, explain
+from app.ai.service import AssistantService, clarification, explain, query_string
 from app.api.deps import Principal, optional_principal
 from app.api.v1.schemas import SearchResponse
 from app.core.errors import AppError, ValidationFailed
@@ -45,6 +45,11 @@ class IntentOut(BaseModel):
     sort: str
     depart_after: str | None
     depart_before: str | None
+    arrive_before: str | None = None
+    max_transfers: int = 1
+    transfer_preference: str = "any"
+    prefer_modes: list[str] = Field(default_factory=list, description="Ranking preference only.")
+    compare_modes: bool = False
 
 
 class InterpretResponse(BaseModel):
@@ -78,6 +83,7 @@ async def interpret(
     today = assistant.search.today()
     result = await assistant.interpret(body.text, today)
     await _record(request, principal, result, len(body.text))
+    _record_metrics(request, result)
 
     intent = result.intent
     modes = sorted(m.value for m in intent.modes)
@@ -92,6 +98,11 @@ async def interpret(
         sort=intent.sort.value,
         depart_after=intent.depart_after.strftime("%H:%M") if intent.depart_after else None,
         depart_before=intent.depart_before.strftime("%H:%M") if intent.depart_before else None,
+        arrive_before=intent.arrive_before.strftime("%H:%M") if intent.arrive_before else None,
+        max_transfers=intent.max_transfers,
+        transfer_preference=intent.transfer_preference,
+        prefer_modes=sorted(m.value for m in intent.prefer_modes),
+        compare_modes=intent.compare_modes,
     )
     common = dict(
         engine=result.engine,
@@ -119,23 +130,37 @@ async def interpret(
             explanation=exc.message,
             results=None,
         )
-    qs = [
-        f"origin={intent.origin_id}",
-        f"destination={intent.destination_id}",
-        f"date={intent.travel_date.isoformat()}",
-    ]
-    if modes:
-        qs.append(f"modes={','.join(modes)}")
-    if intent.sort.value != "recommended":
-        qs.append(f"sort={intent.sort.value}")
     return InterpretResponse(
         **common,
         needs_clarification=False,
         clarification=None,
-        search_query="&".join(qs),
+        search_query=query_string(intent),
         explanation=explain(intent, search_result),
         results=SearchResponse.of(search_result),
     )
+
+
+def _record_metrics(request: Request, result) -> None:
+    """Counters only (engine, outcome, tokens, latency); never the request text."""
+    metrics = getattr(request.app.state, "metrics", None)
+    if metrics is None:
+        return
+    metrics.inc("tport_ai_requests_total", engine=result.engine, outcome=result.outcome)
+    metrics.inc("tport_ai_latency_seconds_sum", result.latency_ms / 1000, engine=result.engine)
+    metrics.inc("tport_ai_latency_seconds_count", engine=result.engine)
+    if result.error_code:
+        metrics.inc("tport_ai_errors_total", code=result.error_code)
+    if not result.intent.complete:
+        metrics.inc("tport_ai_clarifications_total")
+    for direction, tokens in (("input", result.input_tokens), ("output", result.output_tokens)):
+        if tokens:
+            metrics.inc("tport_ai_tokens_total", tokens, direction=direction, model=result.model or "")
+    # Cost is only reported when the operator configures their contracted per-token prices.
+    settings = request.app.state.settings
+    in_price, out_price = settings.ai_input_usd_per_mtok, settings.ai_output_usd_per_mtok
+    if in_price is not None and out_price is not None and (result.input_tokens or result.output_tokens):
+        cost = ((result.input_tokens or 0) * in_price + (result.output_tokens or 0) * out_price) / 1_000_000
+        metrics.inc("tport_ai_estimated_cost_usd_total", float(cost), model=result.model or "")
 
 
 async def _record(request: Request, principal: Principal | None, result, input_chars: int) -> None:

@@ -4,33 +4,14 @@ import Link from "next/link";
 import { useId, useState } from "react";
 import { JourneyCard } from "./JourneyCard";
 import { ApiError, clientApi } from "@/lib/api";
-import type { SearchResponse } from "@/lib/types";
-
-interface InterpretResponse {
-  engine: string;
-  fallback_used: boolean;
-  intent: {
-    origin_id: string | null;
-    destination_id: string | null;
-    travel_date: string | null;
-    modes: string[];
-    budget_preference: string;
-    max_price: string | null;
-    time_preference: string;
-    sort: string;
-  };
-  needs_clarification: boolean;
-  clarification: string | null;
-  search_query: string | null;
-  explanation: string | null;
-  results: SearchResponse | null;
-  disclaimer: string;
-}
+import { understoodAs, type InterpretResponse } from "@/lib/assistant";
 
 const EXAMPLES = [
   "Cheapest way from Tashkent to Samarkand tomorrow",
   "Fastest train to Bukhara from Tashkent on Friday",
   "Samarqanddan Buxoroga ertaga",
+  "Tashkent to Bukhara tomorrow, arrive by 6 pm, fewest changes",
+  "Compare train and bus from Tashkent to Samarkand",
 ];
 
 export function Assistant() {
@@ -103,6 +84,13 @@ export function Assistant() {
         {error && <p role="alert" className="text-sm text-danger">{error}</p>}
         {answer?.needs_clarification && (
           <p className="rounded-xl border border-gold/50 px-4 py-3 text-sm text-gold">{answer.clarification}</p>
+        )}
+        {answer && !answer.needs_clarification && understoodAs(answer.intent).length > 0 && (
+          <ul aria-label="Understood as" className="flex flex-wrap gap-1.5">
+            {understoodAs(answer.intent).map((c) => (
+              <li key={c} className="rounded-full bg-blue/15 px-2.5 py-0.5 text-xs text-ink">{c}</li>
+            ))}
+          </ul>
         )}
         {answer?.explanation && <p className="text-sm leading-relaxed">{answer.explanation}</p>}
         {r && r.items.length > 0 && (

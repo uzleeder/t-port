@@ -1,4 +1,5 @@
 import { cookies, headers } from "next/headers";
+import { connection } from "next/server";
 import { ApiError, parseResponse } from "./api";
 
 /**
@@ -22,4 +23,10 @@ export async function serverApi<T>(path: string, init?: RequestInit): Promise<T>
     throw new ApiError(503, "api_unreachable", "The T-Port service is unreachable. Try again shortly.");
   }
   return parseResponse<T>(res);
+}
+
+/** The request time, for "updated X ago" labels. Marks the render as request-time (not prerendered). */
+export async function requestTime(): Promise<number> {
+  await connection();
+  return Date.now();
 }

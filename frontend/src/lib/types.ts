@@ -2,8 +2,9 @@
 
 export type Mode = "train" | "bus" | "flight" | "taxi";
 export const ALL_MODES: Mode[] = ["train", "bus", "flight", "taxi"];
-export type SortKey = "recommended" | "price" | "duration" | "departure";
-export type FreshnessLevel = "fresh" | "stale" | "expired";
+export type SortKey = "recommended" | "price" | "duration" | "departure" | "transfers";
+export type FreshnessLevel = "fresh" | "stale" | "unknown" | "expired";
+export type PriceType = "confirmed" | "indicative" | "estimated" | "demo";
 
 export interface Location {
   id: string;
@@ -11,8 +12,8 @@ export interface Location {
   country_code: string;
   region: string;
   timezone: string;
-  latitude: number;
-  longitude: number;
+  latitude: number | null;
+  longitude: number | null;
   aliases: string[];
 }
 
@@ -52,6 +53,10 @@ export interface Leg {
   duration_minutes: number;
   fares: Fare[];
   freshness: FreshnessLevel;
+  timetable_freshness: FreshnessLevel;
+  price_freshness: FreshnessLevel;
+  price_type: PriceType;
+  provider: Provider | null;
   retrieved_at: string;
   source_updated_at: string | null;
 }
@@ -74,6 +79,8 @@ export interface Journey {
   notes: string[];
   legs: Leg[];
   transfer_checks?: TransferCheck[];
+  price_type: PriceType;
+  booking_note: string | null;
 }
 
 export interface TransferCheck {
@@ -142,4 +149,39 @@ export interface JourneyDetail {
 
 export interface ApiErrorBody {
   error: { code: string; message: string; details: { field?: string; message: string }[] };
+}
+
+export interface CompareItem {
+  id: string;
+  available: boolean;
+  reason: string | null;
+  journey: Journey | null;
+  origin: Location | null;
+  destination: Location | null;
+}
+
+export interface CompareResponse {
+  items: CompareItem[];
+  best: {
+    cheapest: string[];
+    fastest: string[];
+    fewest_transfers: string[];
+    earliest_departure: string[];
+    earliest_arrival: string[];
+  };
+  caveats: string[];
+}
+
+export interface BookingInfo {
+  journey_id: string;
+  bookable: boolean;
+  reason: string | null;
+  provider: Provider | null;
+  booking_host: string | null;
+  price: string;
+  price_max: string | null;
+  currency: string;
+  price_type: PriceType;
+  price_retrieved_at: string | null;
+  leg_journey_ids: string[];
 }

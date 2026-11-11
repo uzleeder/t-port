@@ -58,7 +58,16 @@ test("search, inspect, save and manage a journey", async ({ page }) => {
   await page.getByRole("button", { name: "Save journey" }).click();
   await expect(page.getByRole("link", { name: /Saved/ })).toBeVisible();
 
-  await page.getByRole("link", { name: /Saved · View dashboard/ }).click();
+  // Sign out, sign back in, and the saved journey is still there.
+  const nav = page.getByRole("navigation", { name: "Main" });
+  await nav.getByRole("button", { name: "Sign out" }).click();
+  await expect(nav.getByRole("link", { name: "Sign in" })).toBeVisible();
+  await nav.getByRole("link", { name: "Sign in" }).click();
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Password").fill("correct horse battery 9");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/dashboard/);
   await expect(page.getByRole("heading", { name: /Saved journeys/ })).toContainText("(1)");
   await expect(page.getByRole("listitem").getByText("Tashkent → Bukhara")).toBeVisible();
 
@@ -88,4 +97,37 @@ test("invalid searches show clear errors", async ({ page }) => {
   await expect(alert).toContainText("Origin and destination must be different");
   await page.goto("/search?origin=atlantis&destination=tashkent&date=2026-12-01");
   await expect(alert).toContainText("recognise");
+});
+
+// The scenarios below use the API's fault simulation (enabled only in dev/test, never in production).
+const route = "/search?origin=tashkent&destination=samarkand";
+
+test("a provider outage is explained and can be retried", async ({ page }) => {
+  await page.goto(`${route}&simulate=outage`);
+  const alert = page.locator("main [role=alert]").filter({ hasText: "didn't respond" });
+  await expect(alert).toContainText("Demo outage simulator");
+  await expect(page.getByRole("list", { name: "Journeys" }).getByRole("listitem").first()).toBeVisible();
+  await alert.getByRole("button", { name: "Retry search" }).click();
+  await expect(alert).toBeVisible(); // still failing after the retry, and still explained
+});
+
+test("stale data is labelled and never shown as current", async ({ page }) => {
+  await page.goto(`${route}&simulate=stale`);
+  await expect(page.getByText("Some options use data that may be out of date")).toBeVisible();
+  const first = page.getByRole("list", { name: "Journeys" }).getByRole("listitem").first();
+  await expect(first.getByText("Data may be outdated")).toBeVisible();
+  await expect(first.getByText(/updated \d+ min ago/)).toBeVisible();
+  await page.getByText("How to read prices and labels").click();
+  await expect(page.getByText("Indicative price", { exact: true })).toBeVisible();
+});
+
+test("demo journeys have no booking action", async ({ page }) => {
+  await page.goto(route);
+  const first = page.getByRole("list", { name: "Journeys" }).getByRole("listitem").first();
+  await expect(first.getByText("Demo price")).toBeVisible();
+  await expect(first.getByText("Not bookable through T-Port")).toBeVisible();
+  await first.getByRole("link", { name: /View details/ }).click();
+  await expect(page.getByText("Demo journeys cannot be booked.")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Book with the operator" })).toHaveCount(0);
+  await expect(page.getByText(/Source:\s*T-Port Demo Dataset/).first()).toBeVisible();
 });
