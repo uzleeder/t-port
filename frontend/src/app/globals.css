@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+/* T-Port design tokens. The product is dark-first by design. */
+@theme {
+  --color-navy: #080f23;
+  --color-surface: #101d38;
+  --color-surface-2: #16264a;
+  --color-line: #24365f;
+  --color-blue: #377dff;
+  --color-blue-hover: #5a94ff;
+  --color-gold: #d6ad61;
+  --color-ink: #f7f9ff;
+  --color-muted: #b7c5dc;
+  --color-danger: #ff8a8a;
+  --color-success: #5fd39a;
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-navy);
+  color: var(--color-ink);
+}
+
+/* Visible keyboard focus everywhere. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-blue);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Date picker icon readable on dark backgrounds. */
+input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.8);
+  cursor: pointer;
+}
+
+/* Hero logo: CSS 3D idle sway + orbital comet (see components/Logo.tsx). */
+.tport-orbit-stage {
+  perspective: 900px;
+}
+.tport-orbit-sway {
+  transform-style: preserve-3d;
+  transform-origin: 50% 55%;
+  animation: tport-sway 7s ease-in-out infinite;
+}
+.tport-comet {
+  stroke-dasharray: 9 91;
+  animation: tport-orbit 4.5s linear infinite;
+}
+@keyframes tport-sway {
+  0%,
+  100% {
+    transform: rotateY(-12deg) rotateX(4deg);
+  }
+  50% {
+    transform: rotateY(12deg) rotateX(-2deg);
+  }
+}
+@keyframes tport-orbit {
+  from {
+    stroke-dashoffset: 100;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tport-orbit-sway,
+  .tport-comet {
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,19 @@
+# Production reverse proxy: automatic HTTPS (Let's Encrypt) in front of the web container.
+# Replace tport.example with your domain; its DNS A/AAAA records must point at this host.
+tport.example {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	# Caddy replaces any client-supplied X-Forwarded-For with the real client IP
+	# (no trusted_proxies configured), so the API can rate-limit per client.
+	reverse_proxy web:2028
+
+	log {
+		output stdout
+		format json
+	}
+}

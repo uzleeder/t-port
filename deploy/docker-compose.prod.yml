@@ -1,0 +1,55 @@
+# Example single-host production stack: Caddy (HTTPS) -> web (Next.js) -> api (FastAPI).
+# PostgreSQL is a MANAGED service (not in this file). Only ports 80/443 are published.
+#   cp .env.example .env.production   # fill in real values; never commit it
+#   docker compose -f deploy/docker-compose.prod.yml --env-file .env.production up -d --build
+name: tport-prod
+
+services:
+  api:
+    build: ../backend
+    env_file: ../.env.production
+    environment:
+      TPORT_ENVIRONMENT: production
+      # Caddy overwrites X-Forwarded-For and Next.js passes it through; trust it only from
+      # the private network this stack runs on.
+      FORWARDED_ALLOW_IPS: "172.30.0.0/24"
+      WEB_CONCURRENCY: "2"
+    restart: unless-stopped
+    networks: [internal]
+    expose: ["8000"]
+    logging: &logging
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  web:
+    build:
+      context: ../frontend
+      args:
+        API_INTERNAL_URL: http://api:8000
+    restart: unless-stopped
+    depends_on: [api]
+    networks: [internal]
+    expose: ["2028"]
+    logging: *logging
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [web]
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [internal]
+    logging: *logging
+
+networks:
+  internal:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  caddy_data:
+  caddy_config:

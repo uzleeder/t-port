@@ -1,0 +1,62 @@
+# Local development stack. NOT a production deployment (see docs/deployment.md).
+#   docker compose up -d db          # just PostgreSQL, for running api/web on the host
+#   docker compose up --build        # full stack: http://localhost:2028
+name: tport
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tport}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tport}
+      POSTGRES_DB: ${POSTGRES_DB:-tport}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Bound to loopback only so the database is never reachable from the network.
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: ./backend
+    environment:
+      TPORT_ENVIRONMENT: development
+      TPORT_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-tport}:${POSTGRES_PASSWORD:-tport}@db:5432/${POSTGRES_DB:-tport}
+      TPORT_CORS_ORIGINS: '["http://localhost:2028"]'
+      TPORT_AI_ENGINE: ${TPORT_AI_ENGINE:-rules}
+      TPORT_AI_API_KEY: ${TPORT_AI_API_KEY:-}
+      # Next.js passes X-Forwarded-For through unchanged and does not set it, so without a
+      # front proxy that overwrites it (Caddy in production) the header must NOT be trusted.
+      # Locally, rate limits therefore apply per web container. See docs/deployment.md.
+      FORWARDED_ALLOW_IPS: "127.0.0.1"
+    depends_on:
+      db:
+        condition: service_healthy
+    # Not published: only the web container talks to the API.
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        API_INTERNAL_URL: http://api:8000
+    environment:
+      API_INTERNAL_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:2028:2028"
+
+volumes:
+  pgdata:

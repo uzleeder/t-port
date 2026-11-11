@@ -1,0 +1,48 @@
+[project]
+name = "tport-backend"
+version = "0.2.0"
+description = "T-Port API: deterministic multimodal transit search for Uzbekistan (Phase 1 MVP)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1.0",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.8,<3",
+    "pydantic-settings>=2.4,<3",
+    "tzdata>=2024.1",
+    "sqlalchemy>=2.0.30,<2.1",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.2",
+    "argon2-cffi>=23.1",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+# Optional LLM interpreter (TPORT_AI_ENGINE=anthropic). Without it, the deterministic parser is used.
+ai = ["anthropic>=1.0"]
+dev = [
+    "pytest>=8.3",
+    "httpx>=0.27",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "ASYNC"]
+ignore = ["S101", "UP046", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S"]
