@@ -1,0 +1,17 @@
+# Normalize text files to LF in the repository.
+* text=auto
+
+# Files executed or parsed inside Linux containers must keep LF even on Windows checkouts,
+# otherwise "#!/bin/sh\r" fails with "not found" when the container starts.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.dockerfile text eol=lf
+Caddyfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Binary assets
+*.png binary
+*.jpg binary
+*.webp binary
+*.ico binary
