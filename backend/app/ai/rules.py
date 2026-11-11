@@ -179,12 +179,118 @@ def _max_price(text: str) -> int | None:
     return int(value) if value >= 1_000 else None
 
 
+# A clock time needs am/pm or minutes ("6 pm", "18:00", "9.30am"); a bare "by 6" is too ambiguous.
+_TIME = r"(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?"
+
+
+def _clock(hour: str, minute: str | None, ampm: str | None) -> str | None:
+    if minute is None and ampm is None:
+        return None
+    h, m = int(hour), int(minute or 0)
+    if ampm:
+        if not 1 <= h <= 12:
+            return None
+        h = h % 12 + (12 if ampm.startswith("p") else 0)
+    if h > 23 or m > 59:
+        return None
+    return f"{h:02d}:{m:02d}"
+
+
+def _times(text: str) -> tuple[dict[str, str], str]:
+    """Explicit clock constraints -> {depart_after, depart_before, arrive_before}, text without them."""
+    found: dict[str, str] = {}
+    patterns = [
+        ("depart_after", rf"(?:leav\w*|depart\w*|set(?:ting)? off|go(?:ing)?)\s+(?:after|from)\s+{_TIME}"),
+        ("depart_before", rf"(?:leav\w*|depart\w*|set(?:ting)? off|go(?:ing)?)\s+(?:before|by)\s+{_TIME}"),
+        ("arrive_before", rf"(?:arriv\w*|be there|get there|reach\w*)\s+(?:by|before|until)\s+{_TIME}"),
+        ("depart_after", rf"(?<!\w)(?:after|после)\s+{_TIME}"),
+        ("depart_after", rf"{_TIME}\s*dan\s+keyin"),
+        ("arrive_before", rf"(?<!\w)(?:by|before|к|до)\s+{_TIME}"),
+        ("arrive_before", rf"{_TIME}\s*(?:gacha|ga qadar)"),
+    ]
+    for key, pattern in patterns:
+        for m in re.finditer(pattern, text):
+            value = _clock(m[1], m[2], m[3])
+            if value and key not in found:
+                found[key] = value
+                text = text[: m.start()] + " " * (m.end() - m.start()) + text[m.end() :]
+    return found, text
+
+
+def _transfers(text: str) -> tuple[str, int | None]:
+    if _has(
+        text,
+        [
+            "direct",
+            "non-stop",
+            "nonstop",
+            "no changes",
+            "no transfers",
+            "without changes",
+            "without transfers",
+            "to'g'ridan",
+            "togridan",
+            "прямой",
+            "прямым",
+            "без пересадок",
+        ],
+    ):
+        return "direct", 0
+    if re.search(r"(?:fewest|least|minimum|min|as few)\s+(?:\w+\s+)?(?:changes|transfers|connections)", text):
+        return "fewest", None
+    words = {"one": 1, "1": 1, "two": 2, "2": 2}
+    change = r"(?:changes?|transfers?|connections?)"
+    if m := re.search(rf"(?:up to|at most|max(?:imum)?)\s+(one|two|1|2)\s+{change}", text):
+        return "any", words[m[1]]
+    if m := re.search(rf"(?<!\w)(one|two|1|2)\s+{change}\s+(?:is |are )?(?:ok|fine|allowed)", text):
+        return "any", words[m[1]]
+    return "any", None
+
+
+def _preferred(text: str) -> tuple[list[str], str]:
+    """'prefer train', 'ideally by bus': a ranking preference, not a filter."""
+    prefer: list[str] = []
+    for mode, words in _MODE_WORDS.items():
+        alt = "|".join(re.escape(w) for w in words)
+        filler = r"(?:a\s+|the\s+|by\s+|to\s+take\s+(?:a\s+|the\s+)?)?"
+        pattern = rf"(?:prefer\w*|ideally|preferably|rather)\s+{filler}(?:{alt})(?!\w)"
+        for m in re.finditer(pattern, text):
+            prefer.append(mode)
+            text = text[: m.start()] + " " * (m.end() - m.start()) + text[m.end() :]
+    return sorted(set(prefer)), text
+
+
+_CURRENCIES = {
+    "USD": r"\$|usd|dollars?|доллар\w*",
+    "EUR": r"€|eur|euros?|евро",
+    "RUB": r"rub|rubles?|roubles?|руб\w*",
+}
+
+
+def _foreign_budget(text: str) -> tuple[int, str] | None:
+    for code, words in _CURRENCIES.items():
+        m = re.search(rf"(?:{words})\s*(\d[\d,]*)(?!\w)", text) or re.search(
+            rf"(?<![\w.])(\d[\d,]*)\s*(?:{words})(?!\w)", text
+        )
+        if m:
+            return int(m[1].replace(",", "")), code
+    return None
+
+
 def parse(text: str, catalog: LocationCatalog, today: date) -> RawIntent:
     t = _fold(text)
     t = re.sub(r"[→>]|->|—|–", " to ", t)
     t = re.sub(r"\s+", " ", t)
     origin, destination = _route(t, catalog)
-    wanted, excluded = _modes(t)
+    times, t_rest = _times(t)
+    prefer, t_rest = _preferred(t_rest)
+    wanted, excluded = _modes(t_rest)
+    transfer_pref, max_transfers = _transfers(t_rest)
+    compare = bool(
+        re.search(r"(?<!\w)(?:compare|comparison|versus|vs\.?|сравн\w*|solishtir\w*)(?!\w)", t)
+        or (len(wanted) >= 2 and re.search(r"(?<!\w)(?:or|yoki|или)(?!\w)", t))
+    )
+    foreign = _foreign_budget(t)
     time_pref = "any"
     if _has(t, ["fastest", "quickest", "shortest", "tez", "быстр"]) or re.search(r"быстр\w*", t):
         time_pref = "fastest"
@@ -216,7 +322,16 @@ def parse(text: str, catalog: LocationCatalog, today: date) -> RawIntent:
         modes=wanted,
         excluded_modes=excluded,
         budget_preference=budget,
-        max_price_uzs=_max_price(t),
+        max_price_uzs=None if foreign else _max_price(t),
         time_preference=time_pref,
+        depart_after=times.get("depart_after"),
+        depart_before=times.get("depart_before"),
+        arrive_before=times.get("arrive_before"),
+        transfer_preference=transfer_pref,
+        max_transfers=max_transfers,
+        prefer_modes=prefer,
+        compare_modes=compare,
+        budget_amount=foreign[0] if foreign else None,
+        budget_currency=foreign[1] if foreign else None,
         unsupported_reason=unsupported,
     )

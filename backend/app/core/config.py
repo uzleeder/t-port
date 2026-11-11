@@ -10,7 +10,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="TPORT_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="TPORT_", env_file=".env", extra="ignore", env_ignore_empty=True
+    )
 
     environment: Literal["development", "test", "production"] = "development"
     log_level: str = "INFO"
@@ -63,6 +65,10 @@ class Settings(BaseSettings):
     ai_model: str = "claude-haiku-5-5"
     ai_timeout_seconds: float = Field(default=8.0, gt=0, le=30)
     ai_max_input_chars: int = Field(default=500, ge=20, le=2000)
+    # Optional, operator-supplied prices (USD per million tokens) for the cost metric. Unset = no cost
+    # metric; T-Port never assumes a price list.
+    ai_input_usd_per_mtok: float | None = Field(default=None, ge=0)
+    ai_output_usd_per_mtok: float | None = Field(default=None, ge=0)
 
     # --- multimodal routing ---------------------------------------------------------------
     transfer_min_minutes_same_station: int = Field(default=20, ge=0)

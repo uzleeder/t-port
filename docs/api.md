@@ -29,10 +29,12 @@ non-production environments (both are disabled in production).
 | `origin`, `destination` | location ID | required | e.g. `tashkent`, `samarkand` (from `/locations`) |
 | `date` | `YYYY-MM-DD` | required | Local date at the origin |
 | `modes` | `train,bus,flight,taxi` | all | Comma list |
-| `sort` | `recommended \| price \| duration \| departure` | `recommended` | |
+| `sort` | `recommended \| price \| duration \| departure \| transfers` | `recommended` | `transfers` = fewest changes, then fastest, then cheapest |
 | `max_price` | decimal | none | Same currency as results (UZS) |
 | `depart_after`, `depart_before` | `HH:MM` | none | Local departure window; on-demand services always match |
-| `max_transfers` | `0 \| 1` | `1` | `0` = direct journeys only |
+| `max_transfers` | `0 \| 1 \| 2` | `1` | `0` = direct journeys only (Phase 3: up to 2) |
+| `arrive_before` | `HH:MM` | none | Local time at the destination on the travel date; journeys without a fixed arrival time are excluded |
+| `prefer_modes` | `train,bus,flight,taxi` | none | Ranking preference for `recommended` only; never filters |
 | `page`, `page_size` | int | 1, 20 | `page_size` ≤ 50 |
 
 The response contains `items`, `total`, `page`, `summary` (cheapest, fastest and earliest IDs, price
@@ -76,3 +78,24 @@ and `provider` (`id`, `name`, `is_demo`, `attribution`). `freshness` may now als
 
 Development and test only: with `TPORT_ENABLE_FAULT_SIMULATION=true` (refused in production), search
 accepts `simulate=stale` and/or `simulate=outage` to exercise stale-data and outage handling.
+
+## AI interpretation (Phase 3)
+
+`POST /api/v1/ai/interpret` returns the validated `intent`, a `search_query` that reproduces the same
+deterministic search on `/journeys/search`, the `results`, and an `explanation` assembled by template
+from those results only. Phase 3 intent fields (all optional, backward compatible):
+
+| Field | Meaning |
+|---|---|
+| `arrive_before`, `depart_after`, `depart_before` | Local `HH:MM`; only explicit clock times ("6 pm", "18:00"), never guessed from "by 6" |
+| `transfer_preference` | `direct` (max 0 changes), `fewest` (sort `transfers`, up to 2) or `any` |
+| `max_transfers` | `0`–`2`; an arrival deadline widens the default to 2 |
+| `prefer_modes` | Soft preference (ranking); `modes` stays the hard filter |
+| `compare_modes` | Explanation adds the best option per mode from the returned results |
+
+Budgets in another currency (`$50`, `1500 rubles`) are not converted: the assistant asks for a UZS
+amount. The LLM (when enabled) receives only the request text, today's date and the location catalogue;
+no provider data is ever sent to it. Metrics: `tport_ai_requests_total{engine,outcome}`,
+`tport_ai_latency_seconds_sum/_count`, `tport_ai_errors_total{code}`, `tport_ai_clarifications_total`,
+`tport_ai_tokens_total{direction,model}` and, only when `TPORT_AI_INPUT_USD_PER_MTOK` and
+`TPORT_AI_OUTPUT_USD_PER_MTOK` are set by the operator, `tport_ai_estimated_cost_usd_total{model}`.

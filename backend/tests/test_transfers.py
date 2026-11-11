@@ -153,7 +153,7 @@ def test_transfer_journeys_via_api(client):
     assert (
         client.get(
             "/api/v1/journeys/search",
-            params={"origin": "samarkand", "destination": "termez", "date": "2026-11-13", "max_transfers": 2},
+            params={"origin": "samarkand", "destination": "termez", "date": "2026-11-13", "max_transfers": 3},
         ).status_code
         == 422
     )
