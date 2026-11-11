@@ -240,14 +240,43 @@ class TimetableRepository:
         error: str | None = None,
         retries: int = 0,
         rejected_records: int = 0,
+        status: str | None = None,
+        diagnostics: list[dict] | None = None,
     ) -> None:
         imp.finished_at = now
-        imp.status = "failed" if error else "succeeded"
+        imp.status = status or ("failed" if error else "succeeded")
         imp.departures_count, imp.offers_count = departures, offers
         imp.source_updated_at = source_updated_at
         imp.error_message = error[:2000] if error else None
         imp.retries, imp.rejected_records = retries, rejected_records
+        imp.diagnostics = diagnostics[:50] if diagnostics else None
+        if imp.started_at:
+            imp.duration_ms = int((now - imp.started_at).total_seconds() * 1000)
         self.db.flush()
+
+    def set_status(self, import_id: uuid.UUID, status: str) -> None:
+        self.db.execute(update(m.DataImport).where(m.DataImport.id == import_id).values(status=status))
+
+    def update_progress(self, import_id: uuid.UUID, done: int, total: int) -> bool:
+        """Record progress; returns True if cancellation was requested."""
+        self.db.execute(
+            update(m.DataImport)
+            .where(m.DataImport.id == import_id)
+            .values(requests_done=done, requests_total=total)
+        )
+        return bool(self.db.scalar(select(m.DataImport.cancel_requested).where(m.DataImport.id == import_id)))
+
+    def request_cancel(self, provider_id: str) -> int:
+        """Ask every unfinished import of a provider to stop at its next checkpoint."""
+        result = self.db.execute(
+            update(m.DataImport)
+            .where(
+                m.DataImport.provider_id == provider_id,
+                m.DataImport.status.in_(["pending", "running", "validating"]),
+            )
+            .values(cancel_requested=True)
+        )
+        return result.rowcount or 0
 
     def recent_imports(self, provider_id: str, limit: int = 20) -> list[m.DataImport]:
         return list(

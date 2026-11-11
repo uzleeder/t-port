@@ -28,6 +28,7 @@ from app.api.v1.schemas import HealthResponse, ProviderOut
 from app.core.clock import Clock, SystemClock
 from app.core.config import Settings, get_settings
 from app.core.errors import error_body, install_error_handlers
+from app.core.metrics import Metrics, configure_logging
 from app.data.reference import LOCATIONS, STATIONS
 from app.db.repositories import ReferenceRepository, TimetableRepository
 from app.db.session import make_engine, make_session_factory, transaction
@@ -38,7 +39,7 @@ from app.providers.registry import CONTRACTS, DEMO_CONTRACT, contract_for
 from app.providers.stored import StoredTimetableAdapter
 from app.services.auth import AuthService
 from app.services.catalog import LocationCatalog
-from app.services.freshness import FreshnessPolicy
+from app.services.freshness import FreshnessPolicy, SourcePolicy
 from app.services.provider_health import assess_provider, overall, prometheus_metrics
 from app.services.search import SearchService
 from app.services.transfers import TransferPolicy
@@ -47,6 +48,12 @@ VERSION = "0.9.0"
 log = logging.getLogger("tport")
 
 _UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def _route_of(request: Request) -> str:
+    """Route template (e.g. /api/v1/journeys/{journey_id}), never the raw path: bounded label values."""
+    route = request.scope.get("route")
+    return getattr(route, "path", None) or "unmatched"
 
 
 def seed_reference(factory: sessionmaker[Session]) -> None:
@@ -72,7 +79,7 @@ def create_app(
 ) -> FastAPI:
     settings = settings or get_settings()
     clock = clock or SystemClock()
-    logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    configure_logging(settings.log_level, settings.log_format)
 
     if session_factory is None:
         session_factory = make_session_factory(
@@ -133,7 +140,7 @@ def create_app(
         market_timezone=settings.market_timezone,
         max_days_ahead=settings.search_max_days_ahead,
         max_page_size=settings.search_max_page_size,
-        freshness_by_provider={c.info.id: c.freshness for c in contracts},
+        freshness_by_provider={c.info.id: SourcePolicy.from_contract(c) for c in contracts},
         transfer_policy=TransferPolicy(
             same_station_minutes=settings.transfer_min_minutes_same_station,
             station_change_minutes=settings.transfer_min_minutes_station_change,
@@ -168,6 +175,8 @@ def create_app(
     app.state.catalog = catalog
     app.state.providers = list(providers)
     app.state.contracts = contracts
+    app.state.metrics = Metrics()
+    metrics_registry: Metrics = app.state.metrics
     app.state.session_factory = session_factory
     app.state.search = search
     app.state.auth = AuthService(timedelta(hours=settings.session_ttl_hours))
@@ -223,13 +232,26 @@ def create_app(
                 if path.startswith(prefix) and request.method in _UNSAFE:
                     limited = over_limit(ip, prefix, limit) or limited
             if limited:
+                metrics_registry.inc(
+                    "tport_rate_limited_total",
+                    scope="api" if not path.startswith(tuple(strict_prefixes)) else path.split("/")[3],
+                )
                 return JSONResponse(
                     error_body("rate_limited", "Too many requests. Please wait a minute."),
                     429,
                     headers={"Retry-After": "60"},
                 )
         started = time.perf_counter()
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception:
+            metrics_registry.observe_request(
+                request.method, _route_of(request), 500, time.perf_counter() - started
+            )
+            raise
+        metrics_registry.observe_request(
+            request.method, _route_of(request), response.status_code, time.perf_counter() - started
+        )
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -275,6 +297,10 @@ def create_app(
 
     def _provider_health() -> list:
         now = clock.now()
+        today = now.astimezone(ZoneInfo(settings.market_timezone)).date()
+        active = {c.info.id for c in app.state.contracts}
+        # Registered but not running (invalid, expired or switched off) providers show as DISABLED.
+        inactive = [c for c in CONTRACTS if c.info.id not in active]
         imports_by: dict[str, list] = {}
         try:
             with session_factory() as db:
@@ -286,6 +312,9 @@ def create_app(
         return [
             assess_provider(c, search.stats.get(c.info.id), imports_by.get(c.info.id, []), now)
             for c in app.state.contracts
+        ] + [
+            assess_provider(c, None, [], now, problems=contract_problems(c, today) or ["not enabled here"])
+            for c in inactive
         ]
 
     @app.get("/health/providers", include_in_schema=False)
@@ -300,15 +329,21 @@ def create_app(
                 {**{k: getattr(h, k) for k in h.__slots__}, "reasons": list(h.reasons)} for h in health
             ],
         }
-        return JSONResponse(jsonable_encoder(body), status_code=503 if status == "down" else 200)
+        return JSONResponse(jsonable_encoder(body), status_code=503 if status == "unavailable" else 200)
 
     @app.get("/metrics", include_in_schema=False)
     def metrics(request: Request) -> Response:
         if not _ops_authorized(request):
             return JSONResponse(error_body("not_found", "Not Found"), 404)
-        return Response(
-            prometheus_metrics(_provider_health(), clock.now()), media_type="text/plain; version=0.0.4"
-        )
+        db_up = 1.0
+        try:
+            with session_factory() as db:
+                db.execute(text("SELECT 1"))
+        except Exception:  # noqa: BLE001
+            db_up = 0.0
+        body = metrics_registry.render({"tport_database_up": db_up})
+        body += prometheus_metrics(_provider_health(), clock.now())
+        return Response(body, media_type="text/plain; version=0.0.4")
 
     @app.get("/", include_in_schema=False)
     def root() -> dict:

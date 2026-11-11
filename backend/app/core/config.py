@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     environment: Literal["development", "test", "production"] = "development"
     log_level: str = "INFO"
+    log_format: Literal["text", "json"] = "text"
 
     # Comma-free JSON list in env, e.g. TPORT_CORS_ORIGINS='["https://tport.example"]'
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:2028"])

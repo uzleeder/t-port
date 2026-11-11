@@ -123,7 +123,22 @@ async def search_journeys(
         )
     )
     await _log_search(request, principal, result, channel)
+    _record_search_metrics(request, result)
     return SearchResponse.of(result)
+
+
+def _record_search_metrics(request: Request, result) -> None:
+    metrics = getattr(request.app.state, "metrics", None)
+    if metrics is None:
+        return
+    metrics.inc("tport_searches_total", outcome="results" if result.total else "empty")
+    for j in result.journeys:
+        metrics.inc("tport_journeys_shown_total", freshness=j.freshness.value, price_type=j.price_type.value)
+    if result.excluded.expired_data:
+        metrics.inc("tport_journeys_hidden_expired_total", result.excluded.expired_data)
+    for s in result.sources:
+        if not s.ok:
+            metrics.inc("tport_search_provider_failures_total", provider=s.provider.id)
 
 
 async def _log_search(request: Request, principal: Principal | None, result, channel: str) -> None:

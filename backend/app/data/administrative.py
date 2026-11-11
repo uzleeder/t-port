@@ -18,8 +18,7 @@ _AREAS = (
     ),
     (
         "Buxoro viloyati",
-        "Buxoro, Gʻijduvon, Jondor, Kogon, Olot, Peshku, Qorakoʻl, Qorovulbozor, Romitan, "
-        "Shofirkon, Vobkent",
+        "Buxoro, Gʻijduvon, Jondor, Kogon, Olot, Peshku, Qorakoʻl, Qorovulbozor, Romitan, Shofirkon, Vobkent",
         "Kogon",
     ),
     (
@@ -113,9 +112,7 @@ def administrative_locations(cities: tuple[Location, ...], timezone: str) -> tup
             locations.append(Location(f"city-{_slug(city)}", city, "UZ", region, timezone, None, None))
         locations.extend(_districts(region, region_id, districts, timezone, known_city_names))
     locations.extend(
-        _districts(
-            _NAMANGAN_CITY, "namangan-city", "Davlatobod, Yangi Namangan", timezone, known_city_names
-        )
+        _districts(_NAMANGAN_CITY, "namangan-city", "Davlatobod, Yangi Namangan", timezone, known_city_names)
     )
     return tuple(locations)
 
