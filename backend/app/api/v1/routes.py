@@ -103,7 +103,13 @@ async def search_journeys(
     max_price: Annotated[Decimal | None, Query(gt=0, max_digits=14, decimal_places=2)] = None,
     depart_after: Annotated[time | None, Query(description="Local time HH:MM, inclusive")] = None,
     depart_before: Annotated[time | None, Query(description="Local time HH:MM, exclusive")] = None,
-    max_transfers: Annotated[int, Query(ge=0, le=1, description="0 = direct journeys only")] = 1,
+    max_transfers: Annotated[int, Query(ge=0, le=2, description="0 = direct only; up to 2 changes")] = 1,
+    prefer_modes: Annotated[
+        str | None, Query(max_length=64, description="Comma list; favoured by the recommended ranking")
+    ] = None,
+    arrive_before: Annotated[
+        time | None, Query(description="Arrive by this local time at the destination (HH:MM)")
+    ] = None,
     page: Annotated[int, Query(ge=1, le=1000)] = 1,
     page_size: Annotated[int, Query(ge=1, le=200)] = 20,
     channel: Annotated[str, Query(pattern="^(form|ai)$", include_in_schema=False)] = "form",
@@ -122,6 +128,8 @@ async def search_journeys(
             depart_after=depart_after,
             depart_before=depart_before,
             max_transfers=max_transfers,
+            prefer_modes=_parse_modes(prefer_modes),
+            arrive_before=arrive_before,
             page=page,
             page_size=page_size,
         )

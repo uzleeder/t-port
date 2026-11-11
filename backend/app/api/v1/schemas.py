@@ -255,6 +255,9 @@ class QueryOut(BaseModel):
     max_price: Decimal | None
     depart_after: str | None = None
     depart_before: str | None = None
+    arrive_before: str | None = None
+    max_transfers: int = 1
+    prefer_modes: list[str] = []
 
 
 class SearchResponse(BaseModel):
@@ -283,6 +286,9 @@ class SearchResponse(BaseModel):
                 max_price=r.query.max_price,
                 depart_after=r.query.depart_after.strftime("%H:%M") if r.query.depart_after else None,
                 depart_before=r.query.depart_before.strftime("%H:%M") if r.query.depart_before else None,
+                arrive_before=r.query.arrive_before.strftime("%H:%M") if r.query.arrive_before else None,
+                max_transfers=r.query.max_transfers,
+                prefer_modes=sorted(m.value for m in r.query.prefer_modes),
             ),
             items=[JourneyOut.of(j, tz) for j in r.journeys],
             total=r.total,
