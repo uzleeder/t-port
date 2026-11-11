@@ -11,6 +11,9 @@ agreements with any transport operator, aggregator or ticketing platform. All op
 demo data ("Demo Rail Express", "Demo Air", …) are fictional. The `synthrail` provider used in tests
 (`backend/tests/fixtures/synthetic_rail_feed.json`) is also fictional and is never registered.
 
+Integration status, blockers and owners: [provider-integration-status.md](provider-integration-status.md).
+For a query-API provider, start from the REST adapter template in `backend/app/providers/template/`.
+
 ## How a source is described: `ProviderContract`
 
 Every provider is declared in `backend/app/providers/registry.py` as a `ProviderContract`

@@ -1,0 +1,19 @@
+{
+  "_comment": "Synthetic data for the REST adapter template tests. Fictional operator; not real schedules or fares.",
+  "generated_at": "2026-11-11T04:30:00Z",
+  "trips": [
+    {"trip_id": "EC100.20261112", "mode": "bus", "operator": "Example Coach Co (fictional test fixture)",
+     "from_stop": "TAS-C", "to_stop": "SAM-C", "departs_at": "2026-11-12T07:00:00+05:00", "arrives_at": "2026-11-12T11:30:00+05:00",
+     "fares": [{"fare_id": "std", "name": "Standard", "amount": "85000.00", "currency": "UZS"}]},
+    {"trip_id": "EC102.20261112", "mode": "bus", "operator": "Example Coach Co (fictional test fixture)",
+     "from_stop": "TAS-C", "to_stop": "SAM-C", "departs_at": "2026-11-12T15:00:00+05:00", "arrives_at": "2026-11-12T19:30:00+05:00",
+     "fares": [{"fare_id": "std", "name": "Standard", "amount": "85000.00", "currency": "UZS"},
+               {"fare_id": "cmf", "name": "Comfort", "amount": "110000.00", "currency": "UZS", "updated_at": "2026-11-11T04:45:00Z"}]},
+    {"trip_id": "EC200.20261112", "mode": "bus", "operator": "Example Coach Co (fictional test fixture)",
+     "from_stop": "TAS-C", "to_stop": "BUK-C", "departs_at": "2026-11-12T08:00:00+05:00", "arrives_at": "2026-11-12T15:00:00+05:00",
+     "fares": [{"fare_id": "std", "name": "Standard", "amount": "195000.00", "currency": "UZS"}]},
+    {"trip_id": "EC300.20261112", "mode": "bus", "operator": "Example Coach Co (fictional test fixture)",
+     "from_stop": "SAM-C", "to_stop": "BUK-C", "departs_at": "2026-11-12T13:00:00+05:00", "arrives_at": "2026-11-12T17:00:00+05:00",
+     "fares": [{"fare_id": "std", "name": "Standard", "amount": "60000.00", "currency": "UZS"}]}
+  ]
+}

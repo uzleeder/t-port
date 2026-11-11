@@ -2,8 +2,9 @@
 
 A provider can be enabled only when ``contract_problems`` returns nothing: real sources
 need a named, verified, unexpired authorization that permits showing prices, plus a
-documented data mapping. No live provider is registered in Phase 2 because T-Port has
-no confirmed data agreements yet. See docs/providers.md for the onboarding checklist.
+documented data mapping. No live provider is registered because T-Port has no confirmed
+data agreements yet (see docs/provider-integration-status.md). New REST sources start from
+``app/providers/template``; its contract is intentionally rejected by the gate.
 """
 
 from __future__ import annotations
