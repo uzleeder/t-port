@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
 import time
@@ -41,6 +42,7 @@ from app.services.auth import AuthService
 from app.services.catalog import LocationCatalog
 from app.services.freshness import FreshnessPolicy, SourcePolicy
 from app.services.provider_health import assess_provider, overall, prometheus_metrics
+from app.services.ratelimit import SharedRateLimiter, limiter_key
 from app.services.search import SearchService
 from app.services.transfers import TransferPolicy
 
@@ -180,6 +182,7 @@ def create_app(
     app.state.session_factory = session_factory
     app.state.search = search
     app.state.auth = AuthService(timedelta(hours=settings.session_ttl_hours))
+    app.state.limiter = shared_limiter = SharedRateLimiter(session_factory)
     app.state.assistant = AssistantService(
         catalog, search, llm=llm, max_days_ahead=settings.search_max_days_ahead
     )
@@ -230,7 +233,13 @@ def create_app(
             limited = over_limit(ip, "api", settings.rate_limit_per_minute)
             for prefix, limit in strict_prefixes.items():
                 if path.startswith(prefix) and request.method in _UNSAFE:
-                    limited = over_limit(ip, prefix, limit) or limited
+                    if settings.rate_limit_backend == "database":  # shared by every worker/replica
+                        count = await asyncio.to_thread(
+                            shared_limiter.hit, limiter_key("ip", prefix, ip), 60, clock.now()
+                        )
+                        limited = count > limit or limited
+                    else:
+                        limited = over_limit(ip, prefix, limit) or limited
             if limited:
                 metrics_registry.inc(
                     "tport_rate_limited_total",

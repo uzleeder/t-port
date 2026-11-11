@@ -23,6 +23,7 @@ from app.providers.base import ProviderAdapter
 from app.providers.contracts import ProviderContract
 from app.services.catalog import LocationCatalog
 from app.services.imports import ImportLocked, import_snapshot
+from app.services.ratelimit import SharedRateLimiter
 
 log = logging.getLogger("tport.scheduler")
 AdapterFactory = Callable[[], ProviderAdapter]
@@ -119,6 +120,7 @@ class Scheduler:
                 searches, ai = ActivityRepository(db).purge_older_than(
                     now - timedelta(days=self.retention_days)
                 )
+            SharedRateLimiter(self.session_factory).purge(now)
             housekeeping = {"sessions": sessions, "search_logs": searches, "ai_requests": ai}
             self._last_housekeeping = now
         for r in imports:

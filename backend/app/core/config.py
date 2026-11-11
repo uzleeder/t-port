@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     rate_limit_per_minute: int = Field(default=120, ge=1)
     auth_rate_limit_per_minute: int = Field(default=10, ge=1)  # register/login/logout per IP
     ai_rate_limit_per_minute: int = Field(default=20, ge=1)
+    # "database": auth/AI limits shared by all workers (PostgreSQL). "memory": per process only.
+    rate_limit_backend: Literal["memory", "database"] = "database"
+    # Failed logins per account (by email hash) before further attempts are refused for the window.
+    login_failure_limit: int = Field(default=5, ge=1)
+    login_failure_window_seconds: int = Field(default=15 * 60, ge=60)
 
     enable_demo_provider: bool = True
     # "live": demo adapter generates data on request. "stored": serve the latest imported

@@ -186,6 +186,18 @@ class DataImport(Base):
     diagnostics: Mapped[list[dict] | None] = mapped_column(JSONType)
 
 
+class RateLimitCounter(Base):
+    """Shared fixed-window counters (auth/AI limits, failed logins). Keys are SHA-256 hashes."""
+
+    __tablename__ = "rate_limit_counters"
+    __table_args__ = (Index("ix_rate_limit_counters_expires_at", "expires_at"),)
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    window: Mapped[int] = mapped_column(BigInteger)
+    count: Mapped[int] = mapped_column(Integer)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
 class ProviderImportLock(Base):
     """At most one import per provider at a time. A lock past ``expires_at`` may be taken over."""
 
