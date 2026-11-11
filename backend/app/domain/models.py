@@ -36,7 +36,17 @@ class ScheduleType(StrEnum):
 class Freshness(StrEnum):
     FRESH = "fresh"
     STALE = "stale"
+    UNKNOWN = "unknown"  # the timestamp the policy needs is missing: treat conservatively
     EXPIRED = "expired"
+
+
+class PriceType(StrEnum):
+    """How much a displayed price can be trusted (ordered most to least certain)."""
+
+    CONFIRMED = "confirmed"  # live price from a source that reports current fares, still fresh
+    INDICATIVE = "indicative"  # published tariff, or a live price that is no longer fresh
+    ESTIMATED = "estimated"  # a range or estimate (e.g. taxi)
+    DEMO = "demo"  # simulated
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,7 +121,11 @@ class Leg:
     origin: Station
     destination: Station
     offers: tuple[Offer, ...]
-    freshness: Freshness
+    freshness: Freshness  # worst of timetable and price freshness
+    provider: ProviderInfo | None = None  # attribution travels with the data
+    timetable_freshness: Freshness = Freshness.FRESH
+    price_freshness: Freshness = Freshness.FRESH
+    price_type: PriceType = PriceType.INDICATIVE
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +144,8 @@ class Journey:
     notes: tuple[str, ...] = field(default_factory=tuple)
     # One entry per connection (len == len(legs) - 1); see app.services.transfers.TransferCheck.
     transfer_checks: tuple = field(default_factory=tuple)
+    price_type: PriceType = PriceType.INDICATIVE  # weakest across legs
+    booking_note: str | None = None  # why there is no booking link, when there isn't one
 
     @property
     def modes(self) -> tuple[TransportMode, ...]:
