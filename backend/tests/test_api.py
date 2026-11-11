@@ -15,13 +15,23 @@ def test_health(client):
 
 def test_locations_alias_search(client):
     names = [x["name"] for x in client.get("/api/v1/locations", params={"q": "Buxoro"}).json()["items"]]
-    assert names == ["Bukhara"]
+    assert names == ["Bukhara", "Buxoro tumani", "Buxoro viloyati"]
     assert client.get("/api/v1/locations", params={"q": "qoqon"}).json()["items"][0]["id"] == "kokand"
 
 
 def test_locations_pagination(client):
     page = client.get("/api/v1/locations", params={"limit": 5, "offset": 5}).json()
-    assert page["total"] == 14 and len(page["items"]) == 5 and page["offset"] == 5
+    assert page["total"] == 222 and len(page["items"]) == 5 and page["offset"] == 5
+
+
+def test_administrative_locations_are_selectable(client):
+    page = client.get("/api/v1/locations", params={"q": "Bo‘zatov"}).json()
+    district = page["items"][0]
+    assert district["id"] == "district-qoraqalpogiston-bozatov"
+    assert district["latitude"] is None and district["longitude"] is None
+    assert client.get(f"/api/v1/locations/{district['id']}").json()["stations"] == []
+    page = client.get("/api/v1/locations", params={"q": "Davlatobod"}).json()
+    assert page["items"][0]["region"] == "Namangan shahri"
 
 
 def test_location_detail_includes_stations(client):

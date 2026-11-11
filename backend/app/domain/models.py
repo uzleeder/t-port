@@ -46,8 +46,8 @@ class Location:
     country_code: str
     region: str
     timezone: str
-    latitude: float
-    longitude: float
+    latitude: float | None
+    longitude: float | None
     aliases: tuple[str, ...] = ()
 
 

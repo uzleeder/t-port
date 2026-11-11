@@ -11,8 +11,8 @@ export interface Location {
   country_code: string;
   region: string;
   timezone: string;
-  latitude: number;
-  longitude: number;
+  latitude: number | null;
+  longitude: number | null;
   aliases: string[];
 }
 

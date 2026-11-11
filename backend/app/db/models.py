@@ -134,8 +134,8 @@ class LocationRow(TimestampMixin, Base):
     country_code: Mapped[str] = mapped_column(String(2))
     region: Mapped[str] = mapped_column(String(120))
     timezone: Mapped[str] = mapped_column(String(64))
-    latitude: Mapped[Decimal] = mapped_column(Numeric(9, 6))
-    longitude: Mapped[Decimal] = mapped_column(Numeric(9, 6))
+    latitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
+    longitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
     aliases: Mapped[list[str]] = mapped_column(JSONType, default=list)
 
     __table_args__ = (Index("ix_locations_country_name", "country_code", "name"),)

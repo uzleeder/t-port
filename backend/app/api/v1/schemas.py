@@ -40,8 +40,8 @@ class LocationOut(BaseModel):
     country_code: str
     region: str
     timezone: str
-    latitude: float
-    longitude: float
+    latitude: float | None
+    longitude: float | None
     aliases: list[str]
 
     @classmethod

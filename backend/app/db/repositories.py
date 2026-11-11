@@ -37,8 +37,8 @@ class ReferenceRepository:
             row = self.db.get(m.LocationRow, loc.id) or m.LocationRow(id=loc.id)
             row.name, row.country_code, row.region = loc.name, loc.country_code, loc.region
             row.timezone = loc.timezone
-            row.latitude = Decimal(str(loc.latitude))
-            row.longitude = Decimal(str(loc.longitude))
+            row.latitude = Decimal(str(loc.latitude)) if loc.latitude is not None else None
+            row.longitude = Decimal(str(loc.longitude)) if loc.longitude is not None else None
             row.aliases = list(loc.aliases)
             self.db.add(row)
         self.db.flush()
@@ -64,8 +64,8 @@ class ReferenceRepository:
                 r.country_code,
                 r.region,
                 r.timezone,
-                float(r.latitude),
-                float(r.longitude),
+                float(r.latitude) if r.latitude is not None else None,
+                float(r.longitude) if r.longitude is not None else None,
                 tuple(r.aliases or ()),
             )
             for r in self.db.scalars(select(m.LocationRow).order_by(m.LocationRow.name))
