@@ -2,11 +2,12 @@ import type { Metadata } from "next";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { JourneyCard } from "@/components/JourneyCard";
-import { DemoNotice, StateMessage } from "@/components/Notices";
+import { DemoNotice, LabelsHelp, StateMessage } from "@/components/Notices";
+import { RetryButton } from "@/components/RetryButton";
 import { ResultsControls } from "@/components/ResultsControls";
 import { SearchForm } from "@/components/SearchForm";
 import { ApiError } from "@/lib/api";
-import { serverApi } from "@/lib/server-api";
+import { requestTime, serverApi } from "@/lib/server-api";
 import {
   buildSearchQuery,
   formatDateLong,
@@ -46,9 +47,12 @@ async function Results({ searchParams }: { searchParams: PageProps<"/search">["s
 
   let data: SearchResponse | null = null;
   let error: ApiError | null = null;
+  // Fault simulation is honoured by the API only where it is enabled (never in production).
+  const simulate = typeof raw.simulate === "string" ? `&simulate=${encodeURIComponent(raw.simulate)}` : "";
+  const now = await requestTime();
   try {
     data = await serverApi<SearchResponse>(
-      `/api/v1/journeys/search?${buildSearchQuery(params)}&page_size=20`,
+      `/api/v1/journeys/search?${buildSearchQuery(params)}&page_size=20${simulate}`,
     );
   } catch (e) {
     error = e instanceof ApiError ? e : new ApiError(500, "unknown", "Search failed.");
@@ -67,7 +71,7 @@ async function Results({ searchParams }: { searchParams: PageProps<"/search">["s
         initialDate={params.date}
         initialModes={params.modes}
       />
-      {error ? <SearchError error={error} /> : data && <ResultsBody data={data} params={params} />}
+      {error ? <SearchError error={error} /> : data && <ResultsBody data={data} params={params} now={now} />}
     </div>
   );
 }
@@ -95,11 +99,17 @@ function SearchError({ error }: { error: ApiError }) {
       <p>
         {error.message} {detail}
       </p>
+      {(error.status >= 500 || error.status === 0 || error.status === 429) && (
+        <div className="mt-4">
+          <RetryButton />
+        </div>
+      )}
     </StateMessage>
   );
 }
 
-function ResultsBody({ data, params }: { data: SearchResponse; params: SearchParams }) {
+function ResultsBody({ data, params, now }: { data: SearchResponse; params: SearchParams; now: number }) {
+  const failed = data.sources.filter((s) => !s.ok);
   const { summary, query } = data;
   const byId = new Map(data.items.map((j) => [j.id, j]));
   const fastest = summary.fastest_id ? byId.get(summary.fastest_id) : undefined;
@@ -121,13 +131,25 @@ function ResultsBody({ data, params }: { data: SearchResponse; params: SearchPar
       </div>
 
       {data.contains_demo_data && <DemoNotice />}
-      {data.warnings.map((w) => (
-        <p key={w} role="status" className="rounded-xl border border-danger/50 px-4 py-2 text-sm text-danger">
-          {w}
-        </p>
-      ))}
+      {failed.length > 0 && (
+        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl border border-danger/60 px-4 py-3 text-sm">
+          <p className="flex-1 text-danger">
+            <strong>Some sources didn&apos;t respond:</strong> {failed.map((s) => s.provider.name).join(", ")}.
+            Results from them are missing, so this list may be incomplete.
+          </p>
+          <RetryButton label="Retry search" />
+        </div>
+      )}
+      {data.warnings
+        .filter((w) => !w.includes("temporarily unavailable"))
+        .map((w) => (
+          <p key={w} role="status" className="rounded-xl border border-gold/50 px-4 py-2 text-sm text-gold">
+            {w}
+          </p>
+        ))}
 
       <ResultsControls params={params} />
+      <LabelsHelp />
 
       {data.total === 0 ? (
         <StateMessage title="No direct journeys found">
@@ -161,7 +183,7 @@ function ResultsBody({ data, params }: { data: SearchResponse; params: SearchPar
           <ol className="space-y-3" aria-label="Journeys">
             {data.items.map((j) => (
               <li key={j.id}>
-                <JourneyCard journey={j} highlights={highlight(j.id)} />
+                <JourneyCard journey={j} highlights={highlight(j.id)} now={now} />
               </li>
             ))}
           </ol>

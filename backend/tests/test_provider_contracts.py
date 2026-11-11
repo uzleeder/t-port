@@ -299,3 +299,67 @@ def test_mixed_sources_via_api(app_factory, demo, synth):
         synth_item = next(j for j in body["items"] if j["id"].startswith("synthrail~"))
         detail = c.get(f"/api/v1/journeys/{synth_item['id']}").json()["journey"]
     assert detail["is_demo"] is False and detail["booking_url"].startswith("https://tickets.synthrail.test/")
+
+
+# -- onboarding records, operations, quarantine -------------------------------------------------
+@pytest.mark.parametrize(
+    ("contract", "expected"),
+    [
+        (replace(SYNTH_CONTRACT, onboarding=None), "onboarding record is missing"),
+        (
+            replace(SYNTH_CONTRACT, onboarding=replace(SYNTH_CONTRACT.onboarding, contact_escalation=" ")),
+            "lacks contact_escalation",
+        ),
+        (
+            replace(SYNTH_CONTRACT, onboarding=replace(SYNTH_CONTRACT.onboarding, access_method="synthetic")),
+            "synthetic access method",
+        ),
+        (
+            replace(
+                SYNTH_CONTRACT,
+                capabilities=replace(
+                    SYNTH_CONTRACT.capabilities, operations=frozenset({"schedules", "offers"})
+                ),
+            ),
+            "'booking_links' is not a declared operation",
+        ),
+        (replace(SYNTH_CONTRACT, enabled=False), "disabled"),
+        (
+            replace(SYNTH_CONTRACT, ingestion=replace(SYNTH_CONTRACT.ingestion, requests_per_minute=0)),
+            "requests_per_minute",
+        ),
+        (
+            replace(SYNTH_CONTRACT, ingestion=replace(SYNTH_CONTRACT.ingestion, max_rejected_ratio=0.5)),
+            "max_rejected_ratio",
+        ),
+        (
+            replace(
+                SYNTH_CONTRACT, price_stale_after=timedelta(hours=2), price_expire_after=timedelta(hours=1)
+            ),
+            "price_expire_after",
+        ),
+    ],
+)
+def test_onboarding_and_operational_rules(contract, expected):
+    assert any(expected in p for p in contract_problems(contract, TODAY)), contract_problems(contract, TODAY)
+
+
+def test_partition_keeps_valid_records_only(catalog):
+    from app.providers.contracts import partition_valid
+
+    good, bad = _bad(id="G"), _bad(id="B", arrival_utc=NOW)  # B arrives before it departs
+    offers = [
+        _offer(id="G.o", departure_id="G"),
+        _offer(id="B.o", departure_id="B"),
+        _offer(id="G.x", departure_id="G", fare_name="Other", currency="USD"),
+    ]
+    violations = validate_records(SYNTH_CONTRACT, catalog, [good, bad], offers, NOW)
+    part = partition_valid([good, bad], offers, violations)
+    assert [d.id for d in part.departures] == ["G"] and [o.id for o in part.offers] == ["G.o"]
+    assert (part.rejected_departures, part.rejected_offers) == (1, 2)
+
+
+def test_diagnostics_do_not_echo_payloads(catalog):
+    o = _offer(booking_url="https://evil.test/steal?token=SECRET123")
+    msgs = [v.message for v in validate_records(SYNTH_CONTRACT, catalog, [_bad()], [o], NOW)]
+    assert msgs and not any("SECRET123" in m for m in msgs)

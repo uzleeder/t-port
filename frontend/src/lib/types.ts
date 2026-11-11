@@ -3,7 +3,8 @@
 export type Mode = "train" | "bus" | "flight" | "taxi";
 export const ALL_MODES: Mode[] = ["train", "bus", "flight", "taxi"];
 export type SortKey = "recommended" | "price" | "duration" | "departure";
-export type FreshnessLevel = "fresh" | "stale" | "expired";
+export type FreshnessLevel = "fresh" | "stale" | "unknown" | "expired";
+export type PriceType = "confirmed" | "indicative" | "estimated" | "demo";
 
 export interface Location {
   id: string;
@@ -11,8 +12,8 @@ export interface Location {
   country_code: string;
   region: string;
   timezone: string;
-  latitude: number;
-  longitude: number;
+  latitude: number | null;
+  longitude: number | null;
   aliases: string[];
 }
 
@@ -52,6 +53,10 @@ export interface Leg {
   duration_minutes: number;
   fares: Fare[];
   freshness: FreshnessLevel;
+  timetable_freshness: FreshnessLevel;
+  price_freshness: FreshnessLevel;
+  price_type: PriceType;
+  provider: Provider | null;
   retrieved_at: string;
   source_updated_at: string | null;
 }
@@ -74,6 +79,8 @@ export interface Journey {
   notes: string[];
   legs: Leg[];
   transfer_checks?: TransferCheck[];
+  price_type: PriceType;
+  booking_note: string | null;
 }
 
 export interface TransferCheck {

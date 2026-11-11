@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     environment: Literal["development", "test", "production"] = "development"
     log_level: str = "INFO"
+    log_format: Literal["text", "json"] = "text"
 
     # Comma-free JSON list in env, e.g. TPORT_CORS_ORIGINS='["https://tport.example"]'
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:2028"])
@@ -31,6 +32,11 @@ class Settings(BaseSettings):
     rate_limit_per_minute: int = Field(default=120, ge=1)
     auth_rate_limit_per_minute: int = Field(default=10, ge=1)  # register/login/logout per IP
     ai_rate_limit_per_minute: int = Field(default=20, ge=1)
+    # "database": auth/AI limits shared by all workers (PostgreSQL). "memory": per process only.
+    rate_limit_backend: Literal["memory", "database"] = "database"
+    # Failed logins per account (by email hash) before further attempts are refused for the window.
+    login_failure_limit: int = Field(default=5, ge=1)
+    login_failure_window_seconds: int = Field(default=15 * 60, ge=60)
 
     enable_demo_provider: bool = True
     # "live": demo adapter generates data on request. "stored": serve the latest imported
@@ -67,6 +73,9 @@ class Settings(BaseSettings):
     # Bearer token for /health/providers and /metrics. Unset = those endpoints return 404.
     ops_token: SecretStr | None = Field(default=None, repr=False)
 
+    # Lets a search pass simulate=stale|outage (demos, e2e tests, training). Never in production.
+    enable_fault_simulation: bool = False
+
     # Activity data retention (journey_searches, ai_requests); see `python -m app.cli purge-activity`.
     activity_retention_days: int = Field(default=180, ge=1)
 
@@ -80,6 +89,8 @@ class Settings(BaseSettings):
             problems.append("TPORT_DATABASE_URL uses a development password")
         if not self.cors_origins or any(not o.startswith("https://") for o in self.cors_origins):
             problems.append("TPORT_CORS_ORIGINS must list only https:// origins")
+        if self.enable_fault_simulation:
+            problems.append("TPORT_ENABLE_FAULT_SIMULATION must be off")
         if self.ops_token and len(self.ops_token.get_secret_value()) < 32:
             problems.append("TPORT_OPS_TOKEN must be at least 32 characters")
         if self.database_echo:

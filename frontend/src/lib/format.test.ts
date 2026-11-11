@@ -9,6 +9,7 @@ import {
   marketToday,
   parseSearchParams,
   safeNextPath,
+  timeAgo,
 } from "./format";
 
 describe("formatting", () => {
@@ -89,5 +90,17 @@ describe("safeNextPath", () => {
     for (const bad of ["https://evil.example", "//evil.example", "/\\evil.example", "javascript:alert(1)", "", null, "/a\nb"]) {
       expect(safeNextPath(bad)).toBeNull();
     }
+  });
+});
+
+describe("timeAgo", () => {
+  const now = Date.parse("2026-11-11T10:00:00Z");
+  it("formats ages and stays empty without a reference time", () => {
+    expect(timeAgo("2026-11-11T09:59:40Z", now)).toBe("just now");
+    expect(timeAgo("2026-11-11T09:45:00Z", now)).toBe("15 min ago");
+    expect(timeAgo("2026-11-11T07:00:00Z", now)).toBe("3 h ago");
+    expect(timeAgo("2026-11-08T10:00:00Z", now)).toBe("3 days ago");
+    expect(timeAgo("2026-11-11T09:45:00Z", undefined)).toBeNull();
+    expect(timeAgo(null, now)).toBeNull();
   });
 });

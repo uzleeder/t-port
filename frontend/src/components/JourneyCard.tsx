@@ -1,21 +1,26 @@
 import Link from "next/link";
-import { Badge, DemoBadge, FreshnessBadge } from "./Badges";
+import { Badge, DemoBadge, FreshnessBadge, PRICE_TYPE_TEXT, PriceTypeBadge } from "./Badges";
 import { ModeIcon } from "./ModeIcon";
-import { dayOffset, formatDuration, formatPriceRange, localTime, MODE_LABEL } from "@/lib/format";
+import { dayOffset, formatDuration, formatPriceRange, localTime, MODE_LABEL, timeAgo } from "@/lib/format";
 import type { Journey } from "@/lib/types";
 
 export function JourneyCard({
   journey,
   highlights = [],
+  now,
 }: {
   journey: Journey;
   highlights?: string[];
+  /** Reference time for "updated X ago" (pass from the server render; omitted = not shown). */
+  now?: number;
 }) {
   const first = journey.legs[0];
   const last = journey.legs[journey.legs.length - 1];
   const plus = dayOffset(first.departure_local, last.arrival_local);
   const operators = [...new Set(journey.legs.map((l) => l.operator))].join(" + ");
   const scheduled = first.departure_local !== null;
+  const sources = [...new Set(journey.legs.map((l) => l.provider?.name ?? "Unknown source"))].join(" + ");
+  const updated = timeAgo(journey.legs.map((l) => l.retrieved_at).sort()[0], now);
 
   return (
     <article className="group relative rounded-2xl border border-line bg-surface p-4 transition hover:border-blue/60 sm:p-5">
@@ -55,9 +60,7 @@ export function JourneyCard({
           <p className="text-xl font-bold text-gold tabular-nums sm:text-2xl">
             {formatPriceRange(journey.price, journey.price_max, journey.currency)}
           </p>
-          <p className="text-xs text-muted">
-            {journey.is_price_estimate ? "Estimated fare" : "Lowest fare"}
-          </p>
+          <p className="text-xs text-muted">{PRICE_TYPE_TEXT[journey.price_type].label}</p>
         </div>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -74,6 +77,7 @@ export function JourneyCard({
         ))}
         {journey.is_demo && <DemoBadge />}
         {journey.freshness !== "fresh" && <FreshnessBadge level={journey.freshness} />}
+        {!journey.is_demo && journey.price_type !== "demo" && <PriceTypeBadge type={journey.price_type} />}
         <Link
           href={`/journeys/${encodeURIComponent(journey.id)}`}
           className="ml-auto text-sm font-medium text-blue after:absolute after:inset-0 after:content-[''] hover:underline"
@@ -81,6 +85,11 @@ export function JourneyCard({
           View details<span className="sr-only">: {operators}</span>
         </Link>
       </div>
+      <p className="mt-2 text-xs text-muted">
+        Source: {sources}
+        {updated && <> · updated {updated}</>} ·{" "}
+        {journey.booking_url ? "Book on the operator's site" : "Not bookable through T-Port"}
+      </p>
     </article>
   );
 }

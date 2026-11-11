@@ -40,8 +40,8 @@ class LocationOut(BaseModel):
     country_code: str
     region: str
     timezone: str
-    latitude: float
-    longitude: float
+    latitude: float | None
+    longitude: float | None
     aliases: list[str]
 
     @classmethod
@@ -123,14 +123,25 @@ class LegOut(BaseModel):
     arrival_local: str | None
     duration_minutes: int
     fares: list[FareOut]
-    freshness: str
+    freshness: str = Field(description="Worst of timetable and price freshness: fresh|stale|unknown|expired.")
+    timetable_freshness: str
+    price_freshness: str
+    price_type: str = Field(description="confirmed | indicative | estimated | demo")
+    provider: ProviderOut | None = Field(description="Source of this leg's data, with required attribution.")
     retrieved_at: datetime
     source_updated_at: datetime | None
 
     @classmethod
     def of(cls, leg: Leg, tz: str) -> LegOut:
         d = leg.departure
+        p = leg.provider
         return cls(
+            timetable_freshness=leg.timetable_freshness.value,
+            price_freshness=leg.price_freshness.value,
+            price_type=leg.price_type.value,
+            provider=ProviderOut(id=p.id, name=p.name, is_demo=p.is_demo, attribution=p.attribution)
+            if p
+            else None,
             mode=d.mode.value,
             operator=d.operator_name,
             service_code=d.service_code,
@@ -179,10 +190,14 @@ class JourneyOut(BaseModel):
     notes: list[str]
     legs: list[LegOut]
     transfer_checks: list[TransferCheckOut] = Field(default_factory=list)
+    price_type: str = Field(description="Least certain price type across legs.")
+    booking_note: str | None = Field(default=None, description="Why there is no booking link, if none.")
 
     @classmethod
     def of(cls, j: Journey, tz: str) -> JourneyOut:
         return cls(
+            price_type=j.price_type.value,
+            booking_note=j.booking_note,
             id=j.id,
             modes=[m.value for m in j.modes],
             transfers=j.transfers,

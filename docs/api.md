@@ -6,6 +6,8 @@ non-production environments (both are disabled in production).
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | GET | `/health` | none | `200` when the database is reachable, `503` otherwise |
+| GET | `/health/providers` | ops token | provider states and import statistics (404 without the token) |
+| GET | `/metrics` | ops token | Prometheus text (404 without the token) |
 | GET | `/api/v1/locations?q=&limit=&offset=` | none | Alias-aware city search, paginated |
 | GET | `/api/v1/locations/{id}` | none | City with its stations |
 | GET | `/api/v1/journeys/search` | optional | See parameters below |
@@ -60,4 +62,17 @@ Every error has the same shape:
 ## Rate limits (per client IP, per minute)
 
 All `/api/*` requests: 120. Unsafe requests to `/api/v1/auth/*`: 10. `/api/v1/ai/*`: 20. All are
-configurable. The limiter is in-memory, so each API process counts separately.
+configurable. The auth and AI limits are shared by all API workers (PostgreSQL); the general limit is
+counted per process. Failed logins are additionally limited per account (5 per 15 minutes).
+
+## Reliability fields (added in Phase 2, backward compatible)
+Each journey keeps `freshness` and `booking_url`, and adds:
+- `price_type`: `confirmed` (a fresh live price), `indicative`, `estimated` or `demo`; for a connection,
+  the least certain of its legs
+- `booking_note`: why there is no booking link, when there isn't one
+
+Each leg adds `timetable_freshness`, `price_freshness` (`fresh|stale|unknown|expired`), `price_type`
+and `provider` (`id`, `name`, `is_demo`, `attribution`). `freshness` may now also be `unknown`.
+
+Development and test only: with `TPORT_ENABLE_FAULT_SIMULATION=true` (refused in production), search
+accepts `simulate=stale` and/or `simulate=outage` to exercise stale-data and outage handling.

@@ -87,7 +87,19 @@ python -m app.cli import-demo --days 14   # snapshot demo data into the DB (TPOR
 ```
 
 ```bash
+python -m app.cli scheduler               # due provider imports + daily housekeeping (long-running)
+```
+
+```bash
+python -m app.cli import-provider demo    # one-off import; also: import-due, cancel-import <id>
+```
+
+```bash
 python -m app.cli check-provider demo     # provider contract conformance (exit 1 on violations)
+```
+
+```bash
+python deploy/smoke_test.py https://your.domain --ops-token TOKEN   # post-deployment verification
 ```
 
 ```bash
@@ -111,5 +123,6 @@ See [docs/deployment.md](docs/deployment.md) for HTTPS, managed PostgreSQL, logg
 - [Data sources](docs/providers.md): provider contracts, adapters and the checklist for adding real data
 - [Live-data readiness](docs/live-data-readiness.md): what the ingestion pipeline guarantees today
 - [Pilot runbook](docs/pilot-runbook.md): staging, go-live checklist, alerts, incidents, rollback
+- [Security review](docs/security-review.md) and [Phase 2 audit](docs/phase2-audit.md)
 - [Security](docs/security.md): sessions, CSRF, data handling, known limitations
 - [Deployment](docs/deployment.md): production setup, HTTPS, backup and restore

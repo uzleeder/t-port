@@ -26,6 +26,7 @@ from app.db.session import transaction
 from app.domain.models import TransportMode
 from app.services.catalog import LocationCatalog
 from app.services.search import SearchQuery, SearchService, SortKey
+from app.services.simulation import parse_simulations, simulated
 
 router = APIRouter(prefix="/api/v1")
 log = logging.getLogger("tport.api")
@@ -106,7 +107,10 @@ async def search_journeys(
     page: Annotated[int, Query(ge=1, le=1000)] = 1,
     page_size: Annotated[int, Query(ge=1, le=200)] = 20,
     channel: Annotated[str, Query(pattern="^(form|ai)$", include_in_schema=False)] = "form",
+    simulate: Annotated[str | None, Query(max_length=32, include_in_schema=False)] = None,
 ) -> SearchResponse:
+    if simulate and request.app.state.settings.enable_fault_simulation:  # dev/test only
+        search = simulated(search, parse_simulations(simulate))
     result = await search.search(
         SearchQuery(
             origin_id=origin.strip().lower(),
@@ -123,7 +127,22 @@ async def search_journeys(
         )
     )
     await _log_search(request, principal, result, channel)
+    _record_search_metrics(request, result)
     return SearchResponse.of(result)
+
+
+def _record_search_metrics(request: Request, result) -> None:
+    metrics = getattr(request.app.state, "metrics", None)
+    if metrics is None:
+        return
+    metrics.inc("tport_searches_total", outcome="results" if result.total else "empty")
+    for j in result.journeys:
+        metrics.inc("tport_journeys_shown_total", freshness=j.freshness.value, price_type=j.price_type.value)
+    if result.excluded.expired_data:
+        metrics.inc("tport_journeys_hidden_expired_total", result.excluded.expired_data)
+    for s in result.sources:
+        if not s.ok:
+            metrics.inc("tport_search_provider_failures_total", provider=s.provider.id)
 
 
 async def _log_search(request: Request, principal: Principal | None, result, channel: str) -> None:

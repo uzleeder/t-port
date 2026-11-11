@@ -32,6 +32,7 @@ from sqlalchemy import (
     TypeDecorator,
     UniqueConstraint,
     Uuid,
+    false,
     func,
     true,
 )
@@ -134,8 +135,8 @@ class LocationRow(TimestampMixin, Base):
     country_code: Mapped[str] = mapped_column(String(2))
     region: Mapped[str] = mapped_column(String(120))
     timezone: Mapped[str] = mapped_column(String(64))
-    latitude: Mapped[Decimal] = mapped_column(Numeric(9, 6))
-    longitude: Mapped[Decimal] = mapped_column(Numeric(9, 6))
+    latitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
+    longitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
     aliases: Mapped[list[str]] = mapped_column(JSONType, default=list)
 
     __table_args__ = (Index("ix_locations_country_name", "country_code", "name"),)
@@ -157,13 +158,17 @@ class DataImport(Base):
     __tablename__ = "data_imports"
     __table_args__ = (
         Index("ix_data_imports_provider_started", "provider_id", "started_at"),
-        CheckConstraint("status in ('running','succeeded','failed')", name="ck_data_imports_status"),
+        CheckConstraint(
+            "status in ('pending','running','validating','publishing','succeeded','failed','cancelled')",
+            name="ck_data_imports_status",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     provider_id: Mapped[str] = mapped_column(ForeignKey("providers.id", ondelete="CASCADE"))
     source_reference: Mapped[str] = mapped_column(String(255))  # e.g. dataset version / file name
-    status: Mapped[str] = mapped_column(String(16), default="running")
+    # pending -> running -> validating -> publishing -> succeeded; or failed / cancelled
+    status: Mapped[str] = mapped_column(String(16), default="pending")
     started_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     source_updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
@@ -173,6 +178,24 @@ class DataImport(Base):
     trigger: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
     retries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     rejected_records: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    requests_total: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    requests_done: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    # Up to 50 sample contract violations {code, subject, message}. Never source payloads or secrets.
+    diagnostics: Mapped[list[dict] | None] = mapped_column(JSONType)
+
+
+class RateLimitCounter(Base):
+    """Shared fixed-window counters (auth/AI limits, failed logins). Keys are SHA-256 hashes."""
+
+    __tablename__ = "rate_limit_counters"
+    __table_args__ = (Index("ix_rate_limit_counters_expires_at", "expires_at"),)
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    window: Mapped[int] = mapped_column(BigInteger)
+    count: Mapped[int] = mapped_column(Integer)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
 
 
 class ProviderImportLock(Base):

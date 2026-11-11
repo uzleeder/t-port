@@ -190,7 +190,13 @@ def offer(
 import json  # noqa: E402
 from pathlib import Path  # noqa: E402
 
-from app.providers.contracts import Authorization, Capabilities, IngestionPolicy, ProviderContract  # noqa: E402
+from app.providers.contracts import (  # noqa: E402
+    Authorization,
+    Capabilities,
+    IngestionPolicy,
+    Onboarding,
+    ProviderContract,
+)
 from app.providers.feed import FeedAdapter  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -214,7 +220,10 @@ SYNTH_CONTRACT = ProviderContract(
         expires_on=date(2027, 11, 1),
     ),
     capabilities=Capabilities(
-        modes=frozenset({TransportMode.TRAIN, TransportMode.BUS}), live_prices=False, seat_availability=False
+        modes=frozenset({TransportMode.TRAIN, TransportMode.BUS}),
+        live_prices=False,
+        seat_availability=False,
+        operations=frozenset({"locations", "schedules", "offers", "booking_links"}),
     ),
     ingestion=IngestionPolicy(
         mode="stored", max_concurrency=3, max_attempts=3, backoff_seconds=0.5, update_interval_minutes=60
@@ -222,6 +231,18 @@ SYNTH_CONTRACT = ProviderContract(
     stale_after=timedelta(hours=1),
     expire_after=timedelta(hours=24),
     data_mapping="Feed uses T-Port station IDs; times local to Asia/Tashkent; UZS.",
+    onboarding=Onboarding(
+        official_identity="SynthRail test fixture (fictional)",
+        access_method="licensed_file",
+        allowed_usage="Automated tests only",
+        redistribution_restrictions="None (synthetic)",
+        commercial_use_restrictions="None (synthetic)",
+        rate_limit_terms="Not applicable (local file)",
+        refresh_expectations="Static fixture",
+        contact_escalation="Engineering team",
+        technical_docs="backend/app/providers/feed.py",
+        test_environment="backend/tests/fixtures",
+    ),
 )
 
 

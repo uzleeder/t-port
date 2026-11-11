@@ -7,12 +7,14 @@ from collections.abc import Iterable
 
 from app.domain.models import Location, Station
 
+_APOSTROPHES = str.maketrans("", "", "'’‘`ʻʼ")
+
 
 def _fold(text: str) -> str:
     """Case/diacritic-insensitive key; also drops apostrophes (Qo'qon == Qoqon)."""
     decomposed = unicodedata.normalize("NFKD", text)
     stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
-    return stripped.casefold().replace("'", "").replace("’", "").replace("`", "").strip()
+    return stripped.casefold().translate(_APOSTROPHES).strip()
 
 
 class LocationCatalog:
@@ -35,17 +37,19 @@ class LocationCatalog:
         return list(self._stations_by_location.get(location_id, []))
 
     def search(self, query: str | None) -> list[Location]:
-        """Prefix matches rank above substring matches; ties sort by name."""
+        """Rank exact, prefix, then substring matches, with ties sorted by name."""
         locations = sorted(self._locations.values(), key=lambda loc: loc.name)
         if not query or not query.strip():
             return locations
         q = _fold(query)
         ranked: list[tuple[int, Location]] = []
         for loc in locations:
-            keys = [_fold(loc.name), _fold(loc.id), *(_fold(a) for a in loc.aliases)]
-            if any(k.startswith(q) for k in keys):
+            keys = [_fold(loc.name), *(_fold(a) for a in loc.aliases)]
+            if q == _fold(loc.id) or q in keys:
                 ranked.append((0, loc))
-            elif any(q in k for k in keys):
+            elif any(k.startswith(q) for k in keys):
                 ranked.append((1, loc))
+            elif any(q in k for k in keys):
+                ranked.append((2, loc))
         ranked.sort(key=lambda pair: (pair[0], pair[1].name))
         return [loc for _, loc in ranked]

@@ -31,13 +31,14 @@ from app.domain.models import (
     Leg,
     Location,
     Offer,
+    PriceType,
     ProviderInfo,
     ScheduleType,
     TransportMode,
 )
 from app.providers.base import ProviderAdapter, ProviderError
 from app.services.catalog import LocationCatalog
-from app.services.freshness import FreshnessPolicy, worst
+from app.services.freshness import FreshnessPolicy, SourcePolicy, worst
 from app.services.provider_health import ProviderCallStats
 from app.services.transfers import InfeasibleTransfer, TransferPolicy, check_connection
 
@@ -47,6 +48,7 @@ _JOURNEY_ID = re.compile(r"^(?P<provider>[a-z0-9-]{1,32})~(?P<departure>[A-Za-z0
 _LEG_REF = r"[a-z0-9-]{1,32}:[A-Za-z0-9._-]{1,48}"
 _MULTI_ID = re.compile(rf"^x~(?P<legs>{_LEG_REF}(?:\+{_LEG_REF}){{1,2}})$")
 _MAX_TRANSFER_JOURNEYS = 12
+_PRICE_ORDER = [PriceType.CONFIRMED, PriceType.INDICATIVE, PriceType.ESTIMATED, PriceType.DEMO]
 
 
 class SortKey(StrEnum):
@@ -125,10 +127,13 @@ class SearchService:
         max_days_ahead: int = 90,
         max_page_size: int = 50,
         transfer_policy: TransferPolicy | None = None,
-        freshness_by_provider: dict[str, FreshnessPolicy] | None = None,
+        freshness_by_provider: dict[str, FreshnessPolicy | SourcePolicy] | None = None,
     ) -> None:
-        # Provider-specific freshness (from contracts) falls back to the global policy.
-        self._freshness_by = dict(freshness_by_provider or {})
+        # Provider-specific policies (from contracts) fall back to the global freshness policy.
+        self._sources: dict[str, SourcePolicy] = {
+            pid: p if isinstance(p, SourcePolicy) else SourcePolicy(p, p)
+            for pid, p in (freshness_by_provider or {}).items()
+        }
         self.stats: dict[str, ProviderCallStats] = {p.id: ProviderCallStats() for p in providers}
         self._transfer_policy = transfer_policy or TransferPolicy()
         self._catalog = catalog
@@ -139,11 +144,57 @@ class SearchService:
         self._max_days_ahead = max_days_ahead
         self._max_page_size = max_page_size
 
+    def source_policy(self, provider_id: str) -> SourcePolicy:
+        return self._sources.get(provider_id) or SourcePolicy(self._freshness, self._freshness)
+
     def policy_for(self, provider_id: str) -> FreshnessPolicy:
-        return self._freshness_by.get(provider_id, self._freshness)
+        """Timetable freshness policy for a provider."""
+        return self.source_policy(provider_id).timetable
 
     def _assess(self, record: Departure | Offer, now: datetime) -> Freshness:
-        return self.policy_for(record.provider_id).assess(record.retrieved_at, now)
+        """Timetable policy for departures, price policy for offers, on the contract's timestamp."""
+        sp = self.source_policy(record.provider_id)
+        policy = sp.price if isinstance(record, Offer) else sp.timetable
+        ts = record.source_updated_at if sp.basis == "source_updated_at" else record.retrieved_at
+        return policy.assess(ts, now)
+
+    def _make_leg(
+        self, provider: ProviderAdapter, dep: Departure, offers: list[Offer], now: datetime
+    ) -> Leg | None:
+        o_st = self._catalog.station(dep.origin_station_id)
+        d_st = self._catalog.station(dep.destination_station_id)
+        if o_st is None or d_st is None:
+            log.warning("departure %s references unknown station", dep.id)
+            return None
+        offers = sorted(offers, key=lambda o: (o.price, o.fare_name))
+        timetable = self._assess(dep, now)
+        price = worst(*(self._assess(o, now) for o in offers))
+        cheapest = offers[0]
+        if provider.info.is_demo:
+            ptype = PriceType.DEMO
+        elif cheapest.is_estimate:
+            ptype = PriceType.ESTIMATED
+        elif self.source_policy(provider.id).live_prices and price == Freshness.FRESH:
+            ptype = PriceType.CONFIRMED
+        else:
+            ptype = PriceType.INDICATIVE
+        return Leg(
+            dep, o_st, d_st, tuple(offers), worst(timetable, price), provider.info, timetable, price, ptype
+        )
+
+    def _booking(self, provider: ProviderAdapter, leg: Leg) -> tuple[str | None, str | None]:
+        """(booking_url, note). Never for demo data; withheld when the price can't be trusted."""
+        if provider.info.is_demo:
+            return None, "Demo journeys cannot be booked."
+        url = provider.validate_booking_url(leg.offers[0].booking_url)
+        if url is None:
+            return None, "This provider has not authorised booking links for this journey."
+        if (
+            self.source_policy(provider.id).booking_requires_fresh_price
+            and leg.price_freshness != Freshness.FRESH
+        ):
+            return None, "Booking link hidden: the price data is out of date. Check the operator directly."
+        return url, None
 
     # -- validation -------------------------------------------------------------
     def today(self) -> date:
@@ -411,19 +462,18 @@ class SearchService:
         total_max = Decimal(0)
         any_estimate = False
         currencies: set[str] = set()
-        for _provider, dep, offers in parts:
-            o_st = self._catalog.station(dep.origin_station_id)
-            d_st = self._catalog.station(dep.destination_station_id)
-            if o_st is None or d_st is None:
+        if len({p.info.is_demo for p, _, _ in parts}) > 1:
+            return None  # never present a demo leg and a real leg as one journey
+        for provider, dep, offers in parts:
+            leg = self._make_leg(provider, dep, offers, now)
+            if leg is None:
                 return None
-            offers = sorted(offers, key=lambda o: (o.price, o.fare_name))
-            cheapest = offers[0]
+            cheapest = leg.offers[0]
             currencies |= {o.currency for o in offers}
             total += cheapest.price
             total_max += cheapest.price_max or cheapest.price
             any_estimate |= cheapest.is_estimate
-            fresh = worst(*(self._assess(x, now) for x in (dep, *offers)))
-            legs.append(Leg(dep, o_st, d_st, tuple(offers), fresh))
+            legs.append(leg)
         if len(currencies) != 1:
             return None
         first, last = legs[0].departure, legs[-1].departure
@@ -452,44 +502,43 @@ class SearchService:
             booking_url=None,  # each leg is booked separately
             notes=tuple(notes),
             transfer_checks=tuple(checks),
+            price_type=max((leg.price_type for leg in legs), key=_PRICE_ORDER.index),
+            booking_note="Each leg is booked separately with its own operator.",
         )
 
     def _build_journey(
         self, provider: ProviderAdapter, dep: Departure, offers: list[Offer], now: datetime
     ) -> Journey | None:
-        origin = self._catalog.station(dep.origin_station_id)
-        destination = self._catalog.station(dep.destination_station_id)
-        if origin is None or destination is None:
-            log.warning("departure %s references unknown station", dep.id)
-            return None
-        offers = sorted(offers, key=lambda o: (o.price, o.fare_name))
-        currencies = {o.currency for o in offers}
-        if len(currencies) != 1:
+        if len({o.currency for o in offers}) != 1:
             log.warning("departure %s has mixed currencies; skipped", dep.id)
             return None
-        cheapest = offers[0]
-        freshness = max(
-            (self._assess(x, now) for x in (dep, *offers)),
-            key=[Freshness.FRESH, Freshness.STALE, Freshness.EXPIRED].index,
-        )
+        leg = self._make_leg(provider, dep, offers, now)
+        if leg is None:
+            return None
+        cheapest = leg.offers[0]
         notes: list[str] = []
         if cheapest.is_estimate:
             notes.append("Price is an estimate range; confirm the fare with the driver/operator.")
         if dep.departure_utc is None:
             notes.append("On-demand service: departure time is arranged directly.")
+        if leg.freshness == Freshness.UNKNOWN:
+            notes.append("The source did not say when this data was last updated. Verify before travel.")
+        booking_url, booking_note = self._booking(provider, leg)
         return Journey(
             id=f"{provider.id}~{dep.id}",
-            legs=(Leg(dep, origin, destination, tuple(offers), freshness),),
+            legs=(leg,),
             price=cheapest.price,
             price_max=cheapest.price_max,
             currency=cheapest.currency,
             is_price_estimate=cheapest.is_estimate,
             travel_minutes=dep.duration_minutes,
             total_minutes=dep.duration_minutes,
-            freshness=freshness,
+            freshness=leg.freshness,
             is_demo=provider.info.is_demo,
-            booking_url=provider.validate_booking_url(cheapest.booking_url),
+            booking_url=booking_url,
             notes=tuple(notes),
+            price_type=leg.price_type,
+            booking_note=booking_note,
         )
 
     # -- detail ---------------------------------------------------------------------

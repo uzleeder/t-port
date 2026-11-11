@@ -70,7 +70,7 @@ export function SearchForm({
           name="origin"
           value={origin}
           onChange={setOrigin}
-          placeholder="City, e.g. Tashkent"
+          placeholder="City, district or region"
         />
         <button
           type="button"
@@ -88,7 +88,7 @@ export function SearchForm({
           name="destination"
           value={destination}
           onChange={setDestination}
-          placeholder="City, e.g. Samarkand"
+          placeholder="City, district or region"
         />
         <div>
           <label htmlFor="travel-date" className="mb-1 block text-xs font-medium text-muted">

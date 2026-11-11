@@ -6,8 +6,12 @@ if [ "${TPORT_SKIP_MIGRATIONS:-0}" != "1" ]; then
   alembic upgrade head
   python -m app.cli seed
 fi
+# Any arguments run instead of the web server, e.g. `python -m app.cli scheduler`.
+if [ "$#" -gt 0 ]; then
+  exec "$@"
+fi
 # --proxy-headers: trust X-Forwarded-For only from FORWARDED_ALLOW_IPS (the web/proxy network).
 exec uvicorn app.main:app --host 0.0.0.0 --port 8000 \
   --workers "${WEB_CONCURRENCY:-2}" \
   --proxy-headers --forwarded-allow-ips "${FORWARDED_ALLOW_IPS:-127.0.0.1}" \
-  --no-server-header
+  --no-server-header --no-access-log

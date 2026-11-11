@@ -15,7 +15,7 @@ from app.db.repositories import TimetableRepository
 from app.db.session import transaction
 from app.main import seed_reference
 from app.providers.base import ProviderError, ProviderRateLimited
-from app.providers.feed import FeedAdapter
+from app.providers.feed import FeedAdapter, FeedError
 from app.providers.stored import StoredTimetableAdapter
 from app.services.imports import ImportLocked, ImportRejected, import_snapshot
 from app.services.search import SearchQuery
@@ -149,13 +149,10 @@ def test_failure_during_write_rolls_back(seeded, catalog, clock, synth, monkeypa
 
 def test_contract_violations_reject_the_whole_import(seeded, catalog, clock, synth):
     good = _import(synth, seeded, clock, catalog)
-    narrow = replace(
-        SYNTH_CONTRACT,
-        capabilities=replace(
-            SYNTH_CONTRACT.capabilities,
-            modes=frozenset({SYNTH_CONTRACT.capabilities.modes.__iter__().__next__()}),
-        ),
-    )
+    from app.domain.models import TransportMode
+
+    train_only = replace(SYNTH_CONTRACT.capabilities, modes=frozenset({TransportMode.TRAIN}))
+    narrow = replace(SYNTH_CONTRACT, capabilities=train_only)
     with pytest.raises(ImportRejected) as exc:
         _import(synth, seeded, clock, catalog, contract=narrow)  # feed has a mode this contract lacks
     assert exc.value.violations and {v.code for v in exc.value.violations} == {"undeclared_mode"}
@@ -163,13 +160,15 @@ def test_contract_violations_reject_the_whole_import(seeded, catalog, clock, syn
     assert deps == good["departures"] and statuses == ["succeeded", "failed"]
     with seeded() as db:
         last = TimetableRepository(db).recent_imports("synthrail")[0]
-    assert last.rejected_records == len(exc.value.violations) and "contract violation" in last.error_message
+    assert (
+        last.rejected_records == exc.value.rejected == 6
+    )  # 3 bus departures + their 3 fares and "contract violation" in last.error_message
 
 
 def test_retryable_errors_are_retried_with_backoff(seeded, catalog, clock):
     sleep = Recorder()
     flaky = _flaky(catalog, clock, [ProviderError("synthrail", "502", retryable=True), TimeoutError()])
-    serial = replace(SYNTH_CONTRACT, ingestion=replace(SYNTH_CONTRACT.ingestion, max_concurrency=1))
+    serial = replace(SYNTH_CONTRACT, ingestion=replace(SYNTH_CONTRACT.ingestion, max_concurrency=1, jitter=0))
     summary = _import(flaky, seeded, clock, catalog, sleep=sleep, days=1, contract=serial)
     # Both errors hit the same request: backoff doubles (0.5 s, then 1 s) per the contract.
     assert summary["retries"] == 2 and sleep.waits == [0.5, 1.0]
@@ -279,3 +278,142 @@ def test_imported_data_ages_by_its_contract(seeded, catalog, synth):
     assert {j.freshness.value for j in search_at(3).journeys} == {"stale"}  # contract: stale after 1 h
     late = search_at(30)  # contract: expired after 24 h
     assert late.total == 0 and late.excluded.expired_data > 0
+
+
+# -- lifecycle, quarantine, cancellation, timeouts, throttling --------------------------------------
+def _last(factory):
+    with factory() as db:
+        return TimetableRepository(db).recent_imports("synthrail")[0]
+
+
+def test_successful_import_records_lifecycle_details(seeded, catalog, clock, synth):
+    summary = _import(synth, seeded, clock, catalog)
+    last = _last(seeded)
+    assert last.status == "succeeded" and last.trigger == "manual"
+    assert last.requests_total == last.requests_done == summary["requests"] > 0
+    assert last.duration_ms is not None and last.diagnostics is None and last.finished_at is not None
+
+
+def test_invalid_records_are_quarantined_within_tolerance(seeded, catalog, clock):
+    feed = synth_feed()
+    feed["services"].append(dict(feed["services"][0], code="BAD1", to="atlantis-rail"))
+    with pytest.raises(FeedError):  # unmapped station: the feed loader refuses outright
+        FeedAdapter(SYNTH_INFO, feed, catalog, clock)
+
+    class OneBad(FeedAdapter):
+        async def get_offers(self, ids):
+            offers = list(await super().get_offers(ids))
+            return [replace(offers[0], price=offers[0].price * -1)] + offers[1:]  # one invalid fare
+
+    tolerant = replace(SYNTH_CONTRACT, ingestion=replace(SYNTH_CONTRACT.ingestion, max_rejected_ratio=0.1))
+    adapter = OneBad(SYNTH_INFO, synth_feed(), catalog, clock)
+    summary = _import(adapter, seeded, clock, catalog, contract=tolerant)
+    last = _last(seeded)
+    assert summary["rejected_records"] == 1 and last.status == "succeeded" and last.rejected_records == 1
+    assert last.diagnostics[0]["code"] == "bad_price" and "price" in last.diagnostics[0]["message"]
+    deps, offers, _ = _counts(seeded)
+    assert deps == summary["departures"] and offers == summary["offers"]  # valid data published
+
+    with pytest.raises(ImportRejected):  # strict contract: the same data is rejected entirely
+        _import(OneBad(SYNTH_INFO, synth_feed(), catalog, clock), seeded, clock, catalog)
+    assert _last(seeded).status == "failed"
+
+
+def test_cancellation_stops_the_import(seeded, catalog, clock):
+    from app.services.imports import ImportCancelled
+
+    class Cancelling(FeedAdapter):
+        calls = 0
+
+        async def get_departures(self, *a, **kw):
+            Cancelling.calls += 1
+            if Cancelling.calls == 2:
+                with transaction(seeded) as db:
+                    TimetableRepository(db).request_cancel("synthrail")
+            await asyncio.sleep(0.001)
+            return await super().get_departures(*a, **kw)
+
+    good = _import(FeedAdapter(SYNTH_INFO, synth_feed(), catalog, clock), seeded, clock, catalog)
+    serial = replace(SYNTH_CONTRACT, ingestion=replace(SYNTH_CONTRACT.ingestion, max_concurrency=1))
+    with pytest.raises(ImportCancelled):
+        _import(
+            Cancelling(SYNTH_INFO, synth_feed(), catalog, clock),
+            seeded,
+            clock,
+            catalog,
+            days=7,
+            contract=serial,
+        )
+    last = _last(seeded)
+    assert last.status == "cancelled" and last.requests_done < last.requests_total
+    deps, _, _ = _counts(seeded)
+    assert deps == good["departures"]  # previous snapshot untouched
+
+
+def test_import_deadline(seeded, catalog, clock):
+    from app.services.imports import ImportTimedOut
+
+    class Slowpoke(FeedAdapter):
+        async def get_departures(self, *a, **kw):
+            await asyncio.sleep(0.3)
+            return await super().get_departures(*a, **kw)
+
+    quick = replace(SYNTH_CONTRACT, ingestion=replace(SYNTH_CONTRACT.ingestion, import_timeout_seconds=0.05))
+    with pytest.raises(ImportTimedOut):
+        _import(Slowpoke(SYNTH_INFO, synth_feed(), catalog, clock), seeded, clock, catalog, contract=quick)
+    assert _last(seeded).status == "failed" and "deadline" in _last(seeded).error_message
+
+
+def test_backoff_jitter_stays_within_bounds(seeded, catalog, clock):
+    import random
+
+    sleep = Recorder()
+    flaky = _flaky(catalog, clock, [ProviderError("synthrail", "502", retryable=True)] * 2)
+    serial = replace(
+        SYNTH_CONTRACT, ingestion=replace(SYNTH_CONTRACT.ingestion, max_concurrency=1, jitter=0.25)
+    )
+    _import(flaky, seeded, clock, catalog, sleep=sleep, days=1, contract=serial, rng=random.Random(7))
+    first, second = sleep.waits
+    assert 0.375 <= first <= 0.625 and 0.75 <= second <= 1.25 and first != 0.5
+
+
+def test_auth_errors_are_never_retried(seeded, catalog, clock):
+    flaky = _flaky(catalog, clock, [ProviderError("synthrail", "401 invalid credentials", retryable=False)])
+    serial = replace(SYNTH_CONTRACT, ingestion=replace(SYNTH_CONTRACT.ingestion, max_concurrency=1))
+    with pytest.raises(ProviderError):
+        _import(flaky, seeded, clock, catalog, days=1, contract=serial)
+    # No retries; at most one queued request starts before the failure cancels the rest.
+    assert flaky.calls <= 2 and _last(seeded).retries == 0 and _last(seeded).status == "failed"
+
+
+def test_throttle_spaces_requests():
+    from app.services.imports import Throttle
+
+    t = [0.0]
+    waits: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        waits.append(seconds)
+
+    async def go():
+        throttle = Throttle(30, sleep, monotonic=lambda: t[0])  # one request every 2 s
+        for _ in range(4):
+            await throttle.wait()
+
+    asyncio.run(go())
+    assert waits == [2.0, 4.0, 6.0]  # first request immediate, then evenly spaced
+
+
+def test_throttled_import_respects_requests_per_minute(seeded, catalog, clock):
+    sleep = Recorder()
+    limited = replace(SYNTH_CONTRACT, ingestion=replace(SYNTH_CONTRACT.ingestion, requests_per_minute=600))
+    summary = _import(
+        FeedAdapter(SYNTH_INFO, synth_feed(), catalog, clock),
+        seeded,
+        clock,
+        catalog,
+        sleep=sleep,
+        contract=limited,
+    )
+    assert summary["requests"] >= 12 and len(sleep.waits) >= summary["requests"] - 1
+    assert all(w > 0 for w in sleep.waits)

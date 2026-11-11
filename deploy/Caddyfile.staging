@@ -1,0 +1,29 @@
+# Staging proxy: HTTPS plus team-only access. Replace the domain, the user name and the
+# password hash (generate with: docker run --rm caddy:2-alpine caddy hash-password).
+staging.tport.example {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Robots-Tag "noindex, nofollow"
+		-Server
+	}
+
+	# Health checks stay open so uptime monitors can reach them without credentials.
+	@public path /health
+	handle @public {
+		reverse_proxy web:2028
+	}
+
+	handle {
+		basic_auth {
+			team REPLACE_WITH_BCRYPT_HASH
+		}
+		reverse_proxy web:2028
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
