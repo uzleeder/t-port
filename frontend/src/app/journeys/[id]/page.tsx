@@ -128,14 +128,20 @@ async function Detail({ params }: { params: PageProps<"/journeys/[id]">["params"
 
       <section className="flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-surface p-4">
         {journey.booking_url ? (
-          <a
-            href={journey.booking_url}
-            target="_blank"
-            rel="noopener noreferrer nofollow"
+          <Link
+            href={`/book/${encodeURIComponent(journey.id)}`}
+            prefetch={false}
             className="rounded-xl bg-blue px-5 py-3 font-semibold text-white hover:bg-blue-hover"
           >
-            Continue to operator ↗
-          </a>
+            Book with the operator
+          </Link>
+        ) : journey.legs.length > 1 ? (
+          <p className="text-sm text-muted">
+            <strong className="text-ink">Each leg is booked separately.</strong>{" "}
+            <Link href={`/book/${encodeURIComponent(journey.id)}`} prefetch={false} className="text-blue hover:underline">
+              See booking options for each leg
+            </Link>
+          </p>
         ) : (
           <p className="text-sm text-muted">
             <strong className="text-ink">Booking not available.</strong>{" "}

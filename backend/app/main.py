@@ -113,6 +113,17 @@ def create_app(
                     if settings.demo_provider_mode == "stored"
                     else live
                 )
+        if settings.enable_synthetic_booking and not settings.is_production:
+            from app.providers.feed import FeedAdapter
+            from app.providers.synthetic_booking import (
+                SYNTHETIC_BOOKING_CONTRACT,
+                SYNTHETIC_BOOKING_FEED,
+                SYNTHETIC_BOOKING_INFO,
+            )
+
+            log.warning("synthetic TEST booking provider enabled (development/e2e only)")
+            contracts.append(SYNTHETIC_BOOKING_CONTRACT)
+            providers.append(FeedAdapter(SYNTHETIC_BOOKING_INFO, SYNTHETIC_BOOKING_FEED, catalog, clock))
     else:
         # Injected adapters (tests, future wiring) use the given contracts or the registry's.
         given = {c.info.id: c for c in explicit_contracts}
@@ -263,7 +274,8 @@ def create_app(
         )
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # Routes may set a stricter policy (the booking redirect uses no-referrer).
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         if path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
             # Access log without query strings, cookies or bodies (they may contain personal data).

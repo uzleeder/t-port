@@ -20,6 +20,10 @@ non-production environments (both are disabled in production).
 | GET | `/api/v1/saved?limit=&offset=` | session | Newest first |
 | POST | `/api/v1/saved` | session + CSRF | `{journey_id, note?}`; only currently valid journeys |
 | DELETE | `/api/v1/saved/{id}` | session + CSRF | `404` for other users' items |
+| GET | `/api/v1/me/preferences` | session | Search defaults (built-in defaults until saved) |
+| PUT | `/api/v1/me/preferences` | session + CSRF | `{modes, prefer_modes, sort, max_transfers, max_price}`; enumerated values only |
+| GET | `/api/v1/journeys/{id}/booking` | public | Explains the external booking: provider, host, price, price type and age, or why not bookable |
+| GET | `/api/v1/journeys/{id}/book` | public | `303` to the operator's booking page after re-validation; `409 booking_unavailable` otherwise |
 | GET | `/api/v1/journeys/compare?ids=a,b[,c,d]` | public | 2–4 journey IDs; each is re-resolved from current data |
 | POST | `/api/v1/ai/interpret` | optional | `{text}` (≤500 chars) |
 
@@ -110,3 +114,20 @@ no provider data is ever sent to it. Metrics: `tport_ai_requests_total{engine,ou
 `caveats` (estimated prices compared by lower bound, demo or stale data, different routes, days or
 currencies). Unavailable journeys never count as best. The web app's `/compare?ids=` page renders this
 as a table on wide screens and labelled cards on phones.
+
+## Preferences and booking hand-off (Phase 3)
+
+Preferences are search defaults for new searches started from the search form (modes, preferred
+modes, sort, changes, budget). They never filter the API by themselves and contain no free text.
+Deleting the account deletes them.
+
+`/journeys/{id}/book` re-resolves the journey from current data and re-checks the link: direct
+journeys only (multi-leg journeys list `leg_journey_ids` to book separately), never demo data,
+HTTPS on a host the provider's contract allows, and a fresh price when the contract requires it.
+T-Port adds nothing to the operator URL and sends `Referrer-Policy: no-referrer`. Only an aggregate
+count per provider and day is stored (`booking_redirect_counts`) plus the counter
+`tport_booking_redirects_total{provider}`.
+
+`TPORT_ENABLE_SYNTHETIC_BOOKING=true` registers a fictional TEST provider whose links point at
+`booking.synthrail.test` so the flow can be exercised in development and e2e tests. The settings
+validator refuses it in production.

@@ -171,3 +171,17 @@ export interface CompareResponse {
   };
   caveats: string[];
 }
+
+export interface BookingInfo {
+  journey_id: string;
+  bookable: boolean;
+  reason: string | null;
+  provider: Provider | null;
+  booking_host: string | null;
+  price: string;
+  price_max: string | null;
+  currency: string;
+  price_type: PriceType;
+  price_retrieved_at: string | null;
+  leg_journey_ids: string[];
+}

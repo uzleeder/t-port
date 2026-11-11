@@ -6,12 +6,15 @@ import logging
 from datetime import date, time
 from decimal import Decimal
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Path, Query, Request
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import RedirectResponse
 
 from app.api.deps import Principal, optional_principal
 from app.api.v1.schemas import (
+    BookingInfoOut,
     CompareBestOut,
     CompareItemOut,
     CompareResponse,
@@ -20,13 +23,15 @@ from app.api.v1.schemas import (
     LocationDetailOut,
     LocationOut,
     Page,
+    ProviderOut,
     SearchResponse,
     StationOut,
 )
-from app.core.errors import NotFound, ProvidersUnavailable, ValidationFailed
-from app.db.repositories import ActivityRepository
+from app.core.errors import AppError, NotFound, ProvidersUnavailable, ValidationFailed
+from app.db.repositories import ActivityRepository, BookingRedirectRepository
 from app.db.session import transaction
 from app.domain.models import TransportMode
+from app.providers.base import validate_booking_url
 from app.services.catalog import LocationCatalog
 from app.services.comparison import MAX_COMPARE, compare
 from app.services.search import SearchQuery, SearchService, SortKey
@@ -224,6 +229,101 @@ async def compare_journeys(
         ),
         caveats=result.caveats,
     )
+
+
+class BookingUnavailable(AppError):
+    status_code = 409
+    code = "booking_unavailable"
+
+
+def _booking_target(journey) -> tuple[str | None, str | None]:
+    """(url, reason). Re-checks the link on every hand-off; never trusts an earlier answer."""
+    if len(journey.legs) > 1:
+        return None, "Each leg is booked separately with its own operator."
+    if journey.booking_url is None:
+        return None, journey.booking_note or "This journey can't be booked through T-Port."
+    leg = journey.legs[0]
+    provider = leg.provider
+    if provider is None or provider.is_demo:
+        return None, "Demo journeys cannot be booked."
+    url = validate_booking_url(journey.booking_url, provider.booking_hosts)
+    if url is None:
+        return None, "This provider has not authorised booking links for this journey."
+    return url, None
+
+
+def _leg_journey_id(leg) -> str:
+    return f"{leg.departure.provider_id}~{leg.departure.id}"
+
+
+@router.get("/journeys/{journey_id}/booking", response_model=BookingInfoOut, tags=["booking"])
+async def booking_info(
+    search: Annotated[SearchService, Depends(get_search)],
+    journey_id: Annotated[str, Path(max_length=600)],
+) -> BookingInfoOut:
+    """Explains the external booking before the traveller leaves T-Port (no redirect, no counting)."""
+    journey, _, _ = await search.get_journey(journey_id)
+    url, reason = _booking_target(journey)
+    provider = journey.legs[0].provider
+    priced_at = [o.retrieved_at for leg in journey.legs for o in leg.offers[:1]]
+    return BookingInfoOut(
+        journey_id=journey.id,
+        bookable=url is not None,
+        reason=reason,
+        provider=ProviderOut(
+            id=provider.id, name=provider.name, is_demo=provider.is_demo, attribution=provider.attribution
+        )
+        if provider and len(journey.legs) == 1
+        else None,
+        booking_host=urlsplit(url).hostname if url else None,
+        price=journey.price,
+        price_max=journey.price_max,
+        currency=journey.currency,
+        price_type=journey.price_type.value,
+        price_retrieved_at=min(priced_at) if priced_at else None,
+        leg_journey_ids=[_leg_journey_id(leg) for leg in journey.legs] if len(journey.legs) > 1 else [],
+    )
+
+
+@router.get("/journeys/{journey_id}/book", tags=["booking"], status_code=303)
+async def book_redirect(
+    request: Request,
+    search: Annotated[SearchService, Depends(get_search)],
+    journey_id: Annotated[str, Path(max_length=600)],
+) -> RedirectResponse:
+    """Hands the traveller to the operator's booking page.
+
+    The journey is re-resolved from current data and the link re-validated (HTTPS, allow-listed host,
+    fresh permitted price). T-Port adds nothing to the operator URL (no user data, no tracking) and
+    only counts redirects per provider and day.
+    """
+    journey, _, _ = await search.get_journey(journey_id)
+    url, reason = _booking_target(journey)
+    if url is None:
+        raise BookingUnavailable(reason or "This journey can't be booked through T-Port.")
+    provider_id = journey.legs[0].departure.provider_id
+    await _count_redirect(request, provider_id)
+    return RedirectResponse(
+        url,
+        status_code=303,
+        headers={"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"},
+    )
+
+
+async def _count_redirect(request: Request, provider_id: str) -> None:
+    metrics = getattr(request.app.state, "metrics", None)
+    if metrics is not None:
+        metrics.inc("tport_booking_redirects_total", provider=provider_id)
+    day = request.app.state.clock.now().date()
+
+    def write() -> None:
+        with transaction(request.app.state.session_factory) as db:
+            BookingRedirectRepository(db).increment(provider_id, day)
+
+    try:
+        await run_in_threadpool(write)
+    except Exception:  # noqa: BLE001 - counting must never block the hand-off
+        log.warning("could not record booking redirect count")
 
 
 @router.get("/journeys/{journey_id}", response_model=JourneyDetailResponse, tags=["journeys"])

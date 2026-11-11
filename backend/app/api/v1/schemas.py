@@ -315,6 +315,24 @@ class JourneyDetailResponse(BaseModel):
     destination: LocationOut
 
 
+class BookingInfoOut(BaseModel):
+    """What the traveller needs to know before leaving T-Port for an operator's booking page."""
+
+    journey_id: str
+    bookable: bool
+    reason: str | None = Field(default=None, description="Why there is no booking link, if none.")
+    provider: ProviderOut | None = None
+    booking_host: str | None = Field(default=None, description="Site the traveller will be sent to.")
+    price: Decimal
+    price_max: Decimal | None
+    currency: str
+    price_type: str
+    price_retrieved_at: datetime | None
+    leg_journey_ids: list[str] = Field(
+        default_factory=list, description="For multi-leg journeys: book each leg separately."
+    )
+
+
 class CompareItemOut(BaseModel):
     id: str
     available: bool

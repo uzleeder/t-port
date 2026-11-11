@@ -359,3 +359,33 @@ class AIRequest(Base):
     output_tokens: Mapped[int | None] = mapped_column(Integer)
     error_code: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class UserPreferences(Base):
+    """Search defaults a signed-in user chose. Only enumerated values: no free text, no history."""
+
+    __tablename__ = "user_preferences"
+    __table_args__ = (
+        CheckConstraint("max_transfers >= 0 AND max_transfers <= 2", name="ck_user_preferences_transfers"),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    modes: Mapped[list[str]] = mapped_column(JSONType, default=list)  # default filter; empty = all
+    prefer_modes: Mapped[list[str]] = mapped_column(JSONType, default=list)  # ranking only
+    sort: Mapped[str] = mapped_column(String(16), default="recommended")
+    max_transfers: Mapped[int] = mapped_column(Integer, default=1)
+    max_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class BookingRedirectCount(Base):
+    """Aggregate redirects to operators' booking pages per provider and day.
+
+    Deliberately no user, session, IP, journey or URL: only how many hand-offs happened.
+    """
+
+    __tablename__ = "booking_redirect_counts"
+
+    provider_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    count: Mapped[int] = mapped_column(Integer, default=0)

@@ -81,6 +81,9 @@ class Settings(BaseSettings):
 
     # Lets a search pass simulate=stale|outage (demos, e2e tests, training). Never in production.
     enable_fault_simulation: bool = False
+    # Registers a fictional, bookable TEST provider (booking.synthrail.test) so the booking hand-off
+    # can be exercised in development and e2e tests. Never in production.
+    enable_synthetic_booking: bool = False
 
     # Activity data retention (journey_searches, ai_requests); see `python -m app.cli purge-activity`.
     activity_retention_days: int = Field(default=180, ge=1)
@@ -97,6 +100,8 @@ class Settings(BaseSettings):
             problems.append("TPORT_CORS_ORIGINS must list only https:// origins")
         if self.enable_fault_simulation:
             problems.append("TPORT_ENABLE_FAULT_SIMULATION must be off")
+        if self.enable_synthetic_booking:
+            problems.append("TPORT_ENABLE_SYNTHETIC_BOOKING must be off")
         if self.ops_token and len(self.ops_token.get_secret_value()) < 32:
             problems.append("TPORT_OPS_TOKEN must be at least 32 characters")
         if self.database_echo:

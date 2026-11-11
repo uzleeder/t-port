@@ -97,6 +97,7 @@ class UserRepository:
     def delete(self, user: m.User) -> None:
         """Removes the account, its sessions and saved journeys. Activity rows keep no user link."""
         self.db.execute(delete(m.SavedJourney).where(m.SavedJourney.user_id == user.id))
+        self.db.execute(delete(m.UserPreferences).where(m.UserPreferences.user_id == user.id))
         self.db.execute(delete(m.Session).where(m.Session.user_id == user.id))
         self.db.execute(
             update(m.JourneySearch).where(m.JourneySearch.user_id == user.id).values(user_id=None)
@@ -451,3 +452,50 @@ def _to_departure(r: m.DepartureRow) -> Departure:
         retrieved_at=r.retrieved_at,
         source_updated_at=r.source_updated_at,
     )
+
+
+# --- preferences and booking hand-offs ----------------------------------------------------
+class PreferencesRepository:
+    def __init__(self, db: Session) -> None:
+        self.db = db
+
+    def get(self, user_id: uuid.UUID) -> m.UserPreferences | None:
+        return self.db.get(m.UserPreferences, user_id)
+
+    def put(self, user_id: uuid.UUID, now: datetime, **values: Any) -> m.UserPreferences:
+        row = self.db.get(m.UserPreferences, user_id)
+        if row is None:
+            row = m.UserPreferences(user_id=user_id)
+            self.db.add(row)
+        for key, value in values.items():
+            setattr(row, key, value)
+        row.updated_at = now
+        self.db.flush()
+        return row
+
+
+class BookingRedirectRepository:
+    def __init__(self, db: Session) -> None:
+        self.db = db
+
+    def increment(self, provider_id: str, day: date) -> None:
+        """Atomic upsert (safe under concurrent redirects on PostgreSQL and SQLite)."""
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        dialect = self.db.bind.dialect.name if self.db.bind else "postgresql"
+        insert = sqlite_insert if dialect == "sqlite" else pg_insert
+        table = m.BookingRedirectCount.__table__
+        stmt = insert(table).values(provider_id=provider_id, day=day, count=1)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["provider_id", "day"], set_={"count": table.c.count + 1}
+        )
+        self.db.execute(stmt)
+
+    def totals(self, since: date) -> dict[str, int]:
+        rows = self.db.execute(
+            select(m.BookingRedirectCount.provider_id, func.sum(m.BookingRedirectCount.count))
+            .where(m.BookingRedirectCount.day >= since)
+            .group_by(m.BookingRedirectCount.provider_id)
+        ).all()
+        return {provider: int(total) for provider, total in rows}
