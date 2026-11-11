@@ -43,6 +43,13 @@ DEMO_CONTRACT = ProviderContract(
 CONTRACTS: tuple[ProviderContract, ...] = (DEMO_CONTRACT,)
 
 
+def adapter_factories(catalog, clock) -> dict:
+    """Provider id -> zero-argument adapter constructor (used by imports, checks and the scheduler)."""
+    from app.providers.demo.adapter import DemoAdapter
+
+    return {"demo": lambda: DemoAdapter(catalog, clock)}
+
+
 def contract_for(provider_id: str) -> ProviderContract | None:
     return next((c for c in CONTRACTS if c.info.id == provider_id), None)
 
