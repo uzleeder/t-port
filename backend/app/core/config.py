@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     # Bearer token for /health/providers and /metrics. Unset = those endpoints return 404.
     ops_token: SecretStr | None = Field(default=None, repr=False)
 
+    # Lets a search pass simulate=stale|outage (demos, e2e tests, training). Never in production.
+    enable_fault_simulation: bool = False
+
     # Activity data retention (journey_searches, ai_requests); see `python -m app.cli purge-activity`.
     activity_retention_days: int = Field(default=180, ge=1)
 
@@ -86,6 +89,8 @@ class Settings(BaseSettings):
             problems.append("TPORT_DATABASE_URL uses a development password")
         if not self.cors_origins or any(not o.startswith("https://") for o in self.cors_origins):
             problems.append("TPORT_CORS_ORIGINS must list only https:// origins")
+        if self.enable_fault_simulation:
+            problems.append("TPORT_ENABLE_FAULT_SIMULATION must be off")
         if self.ops_token and len(self.ops_token.get_secret_value()) < 32:
             problems.append("TPORT_OPS_TOKEN must be at least 32 characters")
         if self.database_echo:

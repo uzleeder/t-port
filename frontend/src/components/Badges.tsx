@@ -1,4 +1,4 @@
-import type { FreshnessLevel } from "@/lib/types";
+import type { FreshnessLevel, PriceType } from "@/lib/types";
 
 export function Badge({
   children,
@@ -26,14 +26,37 @@ export function Badge({
 const FRESHNESS_TEXT: Record<FreshnessLevel, string> = {
   fresh: "Data current",
   stale: "Data may be outdated",
+  unknown: "Update time unknown",
   expired: "Data expired",
 };
 
-export function FreshnessBadge({ level }: { level: FreshnessLevel }) {
+export function FreshnessBadge({ level, label }: { level: FreshnessLevel; label?: string }) {
   const tone = level === "fresh" ? "success" : "danger";
   return (
     <Badge tone={tone}>
-      <span aria-hidden="true">●</span> {FRESHNESS_TEXT[level]}
+      <span aria-hidden="true">●</span> {label ? `${label}: ` : ""}
+      {FRESHNESS_TEXT[level]}
+    </Badge>
+  );
+}
+
+export const PRICE_TYPE_TEXT: Record<PriceType, { label: string; help: string }> = {
+  confirmed: { label: "Confirmed price", help: "A current price reported live by the provider." },
+  indicative: {
+    label: "Indicative price",
+    help: "A published fare or an earlier price. The operator's final price may differ.",
+  },
+  estimated: { label: "Estimate", help: "An estimated range, e.g. for taxis. Agree the fare before travel." },
+  demo: { label: "Demo price", help: "Simulated. Not a real fare." },
+};
+
+export function PriceTypeBadge({ type }: { type: PriceType }) {
+  const tone = type === "confirmed" ? "success" : type === "demo" ? "gold" : "neutral";
+  return (
+    <Badge tone={tone}>
+      <abbr title={PRICE_TYPE_TEXT[type].help} className="no-underline">
+        {PRICE_TYPE_TEXT[type].label}
+      </abbr>
     </Badge>
   );
 }

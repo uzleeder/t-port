@@ -26,6 +26,7 @@ from app.db.session import transaction
 from app.domain.models import TransportMode
 from app.services.catalog import LocationCatalog
 from app.services.search import SearchQuery, SearchService, SortKey
+from app.services.simulation import parse_simulations, simulated
 
 router = APIRouter(prefix="/api/v1")
 log = logging.getLogger("tport.api")
@@ -106,7 +107,10 @@ async def search_journeys(
     page: Annotated[int, Query(ge=1, le=1000)] = 1,
     page_size: Annotated[int, Query(ge=1, le=200)] = 20,
     channel: Annotated[str, Query(pattern="^(form|ai)$", include_in_schema=False)] = "form",
+    simulate: Annotated[str | None, Query(max_length=32, include_in_schema=False)] = None,
 ) -> SearchResponse:
+    if simulate and request.app.state.settings.enable_fault_simulation:  # dev/test only
+        search = simulated(search, parse_simulations(simulate))
     result = await search.search(
         SearchQuery(
             origin_id=origin.strip().lower(),

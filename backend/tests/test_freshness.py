@@ -213,3 +213,50 @@ def test_contract_policies_are_used_by_the_app(app_factory, demo, synth):
     sp = svc.source_policy("synthrail")
     assert sp.timetable.stale_after == SYNTH_CONTRACT.stale_after and sp.live_prices is False
     assert svc.source_policy("unknown-provider").timetable.stale_after == timedelta(minutes=15)
+
+
+# -- fault simulation (dev/test only) ----------------------------------------------------------
+def _sim_search(c, simulate):
+    return c.get(
+        "/api/v1/journeys/search",
+        params={
+            "origin": "tashkent",
+            "destination": "samarkand",
+            "date": TOMORROW.isoformat(),
+            "simulate": simulate,
+        },
+    ).json()
+
+
+def test_simulation_is_ignored_unless_enabled(client):
+    body = _sim_search(client, "stale,outage")
+    assert all(s["ok"] for s in body["sources"]) and {j["freshness"] for j in body["items"]} == {"fresh"}
+
+
+def test_simulated_stale_and_outage(app_factory, settings):
+    sim = settings.model_copy(update={"enable_fault_simulation": True})
+    with TestClient(app_factory(settings=sim)) as c:
+        stale = _sim_search(c, "stale")
+        outage = _sim_search(c, "outage")
+        normal = _sim_search(c, "")
+        real_stats = c.app.state.search.stats
+    assert {j["freshness"] for j in stale["items"]} == {"stale"}
+    assert any("out of date" in w for w in stale["warnings"])
+    failed = [s for s in outage["sources"] if not s["ok"]]
+    assert failed and failed[0]["provider"]["is_demo"] and outage["total"] > 0
+    assert any("temporarily unavailable" in w for w in outage["warnings"])
+    assert all(s["ok"] for s in normal["sources"]) and "demo-outage" not in real_stats
+
+
+def test_fault_simulation_forbidden_in_production():
+    import pytest
+
+    from app.core.config import Settings
+
+    with pytest.raises(ValueError, match="FAULT_SIMULATION"):
+        Settings(
+            environment="production",
+            cors_origins=["https://tport.example"],
+            database_url="postgresql+psycopg://a:b@db/x",
+            enable_fault_simulation=True,
+        )

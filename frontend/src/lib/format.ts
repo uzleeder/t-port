@@ -147,3 +147,14 @@ export function safeNextPath(next: string | null | undefined): string | null {
   if (/[\r\n\t]/.test(next) || next.length > 512) return null;
   return next;
 }
+
+/** "3 min ago" style age; null without a reference time (keeps renders deterministic). */
+export function timeAgo(iso: string | null | undefined, now: number | undefined): string | null {
+  if (!iso || now === undefined) return null;
+  const minutes = Math.max(0, Math.round((now - new Date(iso).getTime()) / 60_000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} h ago`;
+  return `${Math.round(hours / 24)} days ago`;
+}

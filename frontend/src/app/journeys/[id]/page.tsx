@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
-import { Badge, DemoBadge, FreshnessBadge } from "@/components/Badges";
+import { Badge, DemoBadge, FreshnessBadge, PriceTypeBadge } from "@/components/Badges";
 import { ModeIcon } from "@/components/ModeIcon";
 import { DemoNotice, StateMessage } from "@/components/Notices";
 import { SaveJourneyButton } from "@/components/SaveJourneyButton";
 import { ApiError } from "@/lib/api";
-import { serverApi } from "@/lib/server-api";
+import { requestTime, serverApi } from "@/lib/server-api";
 import {
   dayOffset,
   formatDateLong,
@@ -16,6 +16,7 @@ import {
   formatTimestamp,
   localTime,
   MODE_LABEL,
+  timeAgo,
 } from "@/lib/format";
 import type { JourneyDetail, Leg, TransferCheck } from "@/lib/types";
 
@@ -35,6 +36,7 @@ export default function JourneyPage({ params }: PageProps<"/journeys/[id]">) {
 
 async function Detail({ params }: { params: PageProps<"/journeys/[id]">["params"] }) {
   const { id } = await params;
+  const now = await requestTime(); // "updated X ago" depends on the request time
   const journeyId = decodeURIComponent(id);
   let data: JourneyDetail;
   try {
@@ -108,7 +110,7 @@ async function Detail({ params }: { params: PageProps<"/journeys/[id]">["params"
       <ol className="space-y-4" aria-label="Journey legs">
         {journey.legs.map((leg, i) => (
           <li key={i}>
-            <LegCard leg={leg} />
+            <LegCard leg={leg} now={now} />
             {journey.transfer_checks?.[i] && (
               <TransferNote check={journey.transfer_checks[i]} />
             )}
@@ -137,9 +139,10 @@ async function Detail({ params }: { params: PageProps<"/journeys/[id]">["params"
         ) : (
           <p className="text-sm text-muted">
             <strong className="text-ink">Booking not available.</strong>{" "}
-            {journey.is_demo
-              ? "Demo journeys cannot be booked."
-              : "This provider has not authorised booking redirects."}
+            {journey.booking_note ??
+              (journey.is_demo
+                ? "Demo journeys cannot be booked."
+                : "This provider has not authorised booking redirects.")}
           </p>
         )}
         <div className="ml-auto">
@@ -150,7 +153,7 @@ async function Detail({ params }: { params: PageProps<"/journeys/[id]">["params"
   );
 }
 
-function LegCard({ leg }: { leg: Leg }) {
+function LegCard({ leg, now }: { leg: Leg; now: number }) {
   const plus = dayOffset(leg.departure_local, leg.arrival_local);
   return (
     <div className="rounded-2xl border border-line bg-surface p-4 sm:p-5">
@@ -202,6 +205,14 @@ function LegCard({ leg }: { leg: Leg }) {
         </tbody>
       </table>
       <p className="mt-3 text-xs text-muted">
+        <span className="mb-2 flex flex-wrap gap-2">
+          <FreshnessBadge level={leg.timetable_freshness} label="Timetable" />
+          <FreshnessBadge level={leg.price_freshness} label="Price" />
+          <PriceTypeBadge type={leg.price_type} />
+        </span>
+        Source: <span className="text-ink">{leg.provider?.name ?? "Unknown source"}</span>
+        {leg.provider?.attribution && <> ({leg.provider.attribution})</>} · updated{" "}
+        {timeAgo(leg.retrieved_at, now)} ·
         Retrieved {formatTimestamp(leg.retrieved_at)} · Source updated{" "}
         {formatTimestamp(leg.source_updated_at)} (Tashkent time)
       </p>
