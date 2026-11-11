@@ -71,6 +71,15 @@ Journey details are always recomputed from current provider data. If a departure
 data has expired, the detail page says so instead of showing old numbers. Saved journeys store a
 dated **snapshot** that is displayed as "when saved", never as current data.
 
+## Reliability labels
+Each record is assessed with its provider's policy: departures with the **timetable** policy, offers with
+the **price** policy, on `retrieved_at` (or `source_updated_at` when the contract says so). A missing
+timestamp gives `unknown`. Expired prices or timetables are never shown. Each leg gets a **price type**:
+`demo` for demo providers, `estimated` for ranges, `confirmed` only for a *fresh* price from a source with
+`live_prices`, otherwise `indicative`. A connection takes its least certain leg, and demo legs are never
+combined with real ones. Booking links appear only for non-demo legs whose provider permits redirects to
+a verified host and whose price is fresh; otherwise `booking_note` says why.
+
 ## AI boundary
 
 ```

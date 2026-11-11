@@ -51,9 +51,12 @@ This describes what is implemented. **No compliance claim is made**: no legal or
   Production refuses to start with the development database password, non-HTTPS origins or SQL echo.
 
 ## Rate limiting
-In-memory, fixed one-minute windows per client IP: 120/min overall, 10/min on auth mutations,
-20/min on the AI endpoint. Limitations:
-- Counts are per process. Use a shared store (e.g. Redis) when running several API processes.
+Fixed one-minute windows per client IP: 120/min overall (in memory, per process), and 10/min on auth
+mutations and 20/min on the AI endpoint, shared by every worker through PostgreSQL
+(`rate_limit_counters`, hashed keys, fails open if the database is down). Failed logins are also limited
+per account: 5 per 15 minutes, applied to unknown emails too. See [security-review.md](security-review.md).
+Limitations:
+- The general 120/min limit is per process.
 - Next.js rewrites forward `X-Forwarded-For` unchanged but do not set it. The client IP is only
   correct when a front proxy (Caddy in `deploy/`) overwrites that header and uvicorn trusts it only
   from the private network (`FORWARDED_ALLOW_IPS`). Without that, limits apply per web server.

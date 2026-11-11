@@ -112,6 +112,12 @@ jobs:
         working-directory: frontend
       - run: npx playwright test
         working-directory: frontend
+      - name: Post-deployment smoke test against the built app
+        run: |
+          (cd backend && python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > ../api.log 2>&1 &)
+          (cd frontend && npm run start > ../web.log 2>&1 &)
+          for i in $(seq 1 60); do curl -fsS http://localhost:2028/health > /dev/null && break; sleep 2; done
+          python deploy/smoke_test.py http://localhost:2028
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
