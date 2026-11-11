@@ -238,6 +238,7 @@ class DepartureRow(Base):
     __table_args__ = (
         UniqueConstraint("provider_id", "external_id", name="uq_departures_provider_external"),
         Index("ix_departures_route_time", "origin_station_id", "destination_station_id", "travel_date"),
+        Index("ix_departures_provider_date", "provider_id", "travel_date"),  # import publish/replace
         CheckConstraint("duration_minutes > 0", name="ck_departures_duration_positive"),
         CheckConstraint(
             "arrival_utc IS NULL OR departure_utc IS NULL OR arrival_utc > departure_utc",
@@ -300,7 +301,7 @@ class JourneySearch(Base):
     __tablename__ = "journey_searches"
     __table_args__ = (
         Index("ix_journey_searches_created_at", "created_at"),
-        Index("ix_journey_searches_user_id", "user_id"),
+        Index("ix_journey_searches_user_created", "user_id", "created_at"),  # dashboard: recent searches
     )
 
     id: Mapped[int] = mapped_column(BigId, primary_key=True, autoincrement=True)

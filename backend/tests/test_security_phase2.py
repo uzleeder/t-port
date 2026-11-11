@@ -154,3 +154,12 @@ def test_guarded_client_checks_every_request():
             return ok.status_code
 
     assert asyncio.run(go()) == 200
+
+
+def test_blank_optional_settings_are_treated_as_unset(monkeypatch):
+    from app.core.config import Settings
+
+    monkeypatch.setenv("TPORT_AI_INPUT_USD_PER_MTOK", "")
+    monkeypatch.setenv("TPORT_OPS_TOKEN", "")
+    s = Settings(_env_file=None)
+    assert s.ai_input_usd_per_mtok is None and s.ops_token is None

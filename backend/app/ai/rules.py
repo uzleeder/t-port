@@ -62,22 +62,30 @@ def _has(text: str, words: list[str]) -> bool:
     return any(re.search(rf"(?<!\w){re.escape(w)}(?!\w)", text) for w in words)
 
 
+# One compiled alternation per catalogue (hundreds of names and aliases). Compiling a pattern per
+# alias on every request overflowed the ``re`` cache and dominated assistant latency.
+_NAME_INDEX: dict[int, tuple[LocationCatalog, re.Pattern[str], dict[str, str]]] = {}
+
+
+def _name_index(catalog: LocationCatalog) -> tuple[re.Pattern[str], dict[str, str]]:
+    cached = _NAME_INDEX.get(id(catalog))
+    if cached is not None and cached[0] is catalog:
+        return cached[1], cached[2]
+    owner: dict[str, str] = {}
+    for loc in catalog.search(None):
+        for key in (_fold(loc.name), _fold(loc.id), *(_fold(a) for a in loc.aliases)):
+            if len(key) >= 3:
+                owner.setdefault(key, loc.id)  # first location in catalogue order wins a shared alias
+    keys = sorted(owner, key=lambda k: (-len(k), k))  # longest first: leftmost-longest match
+    pattern = re.compile(rf"(?<!\w)({'|'.join(re.escape(k) for k in keys)})\w{{0,3}}(?!\w)")
+    _NAME_INDEX[id(catalog)] = (catalog, pattern, owner)
+    return pattern, owner
+
+
 def _find_locations(text: str, catalog: LocationCatalog) -> list[tuple[int, int, str]]:
     """(start, end, location_id) for every catalogued name/alias, longest match wins."""
-    hits: list[tuple[int, int, str]] = []
-    for loc in catalog.search(None):
-        for key in {_fold(loc.name), _fold(loc.id), *(_fold(a) for a in loc.aliases)}:
-            if len(key) < 3:
-                continue
-            for m in re.finditer(rf"(?<!\w){re.escape(key)}\w{{0,3}}(?!\w)", text):
-                hits.append((m.start(), m.end(), loc.id))
-    hits.sort(key=lambda h: (h[0], -(h[1] - h[0])))
-    out: list[tuple[int, int, str]] = []
-    for h in hits:
-        if out and h[0] < out[-1][1]:
-            continue  # overlaps a longer/earlier match
-        out.append(h)
-    return out
+    pattern, owner = _name_index(catalog)
+    return [(m.start(), m.end(), owner[m.group(1)]) for m in pattern.finditer(text)]
 
 
 def _route(text: str, catalog: LocationCatalog) -> tuple[str | None, str | None]:
