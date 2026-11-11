@@ -315,6 +315,31 @@ class JourneyDetailResponse(BaseModel):
     destination: LocationOut
 
 
+class CompareItemOut(BaseModel):
+    id: str
+    available: bool
+    reason: str | None = Field(default=None, description="Why the journey can't be shown, if not available.")
+    journey: JourneyOut | None = None
+    origin: LocationOut | None = None
+    destination: LocationOut | None = None
+
+
+class CompareBestOut(BaseModel):
+    """IDs of the best journey(s) per criterion; ties list every journey sharing the best value."""
+
+    cheapest: list[str]
+    fastest: list[str]
+    fewest_transfers: list[str]
+    earliest_departure: list[str]
+    earliest_arrival: list[str]
+
+
+class CompareResponse(BaseModel):
+    items: list[CompareItemOut]
+    best: CompareBestOut
+    caveats: list[str]
+
+
 class HealthResponse(BaseModel):
     status: str
     version: str

@@ -20,6 +20,7 @@ non-production environments (both are disabled in production).
 | GET | `/api/v1/saved?limit=&offset=` | session | Newest first |
 | POST | `/api/v1/saved` | session + CSRF | `{journey_id, note?}`; only currently valid journeys |
 | DELETE | `/api/v1/saved/{id}` | session + CSRF | `404` for other users' items |
+| GET | `/api/v1/journeys/compare?ids=a,b[,c,d]` | public | 2–4 journey IDs; each is re-resolved from current data |
 | POST | `/api/v1/ai/interpret` | optional | `{text}` (≤500 chars) |
 
 ## Journey search parameters
@@ -99,3 +100,13 @@ no provider data is ever sent to it. Metrics: `tport_ai_requests_total{engine,ou
 `tport_ai_latency_seconds_sum/_count`, `tport_ai_errors_total{code}`, `tport_ai_clarifications_total`,
 `tport_ai_tokens_total{direction,model}` and, only when `TPORT_AI_INPUT_USD_PER_MTOK` and
 `TPORT_AI_OUTPUT_USD_PER_MTOK` are set by the operator, `tport_ai_estimated_cost_usd_total{model}`.
+
+## Journey comparison (Phase 3)
+
+`GET /api/v1/journeys/compare?ids=` takes 2–4 distinct journey IDs (direct or multi-leg) and returns
+`items` (each `available`, with the current `journey`, or a `reason` such as "already left"),
+`best` (IDs per criterion: `cheapest`, `fastest`, `fewest_transfers`, `earliest_departure`,
+`earliest_arrival`; ties list every ID; a criterion needs at least two comparable journeys) and
+`caveats` (estimated prices compared by lower bound, demo or stale data, different routes, days or
+currencies). Unavailable journeys never count as best. The web app's `/compare?ids=` page renders this
+as a table on wide screens and labelled cards on phones.

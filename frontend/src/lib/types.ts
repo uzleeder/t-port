@@ -2,7 +2,7 @@
 
 export type Mode = "train" | "bus" | "flight" | "taxi";
 export const ALL_MODES: Mode[] = ["train", "bus", "flight", "taxi"];
-export type SortKey = "recommended" | "price" | "duration" | "departure";
+export type SortKey = "recommended" | "price" | "duration" | "departure" | "transfers";
 export type FreshnessLevel = "fresh" | "stale" | "unknown" | "expired";
 export type PriceType = "confirmed" | "indicative" | "estimated" | "demo";
 
@@ -149,4 +149,25 @@ export interface JourneyDetail {
 
 export interface ApiErrorBody {
   error: { code: string; message: string; details: { field?: string; message: string }[] };
+}
+
+export interface CompareItem {
+  id: string;
+  available: boolean;
+  reason: string | null;
+  journey: Journey | null;
+  origin: Location | null;
+  destination: Location | null;
+}
+
+export interface CompareResponse {
+  items: CompareItem[];
+  best: {
+    cheapest: string[];
+    fastest: string[];
+    fewest_transfers: string[];
+    earliest_departure: string[];
+    earliest_arrival: string[];
+  };
+  caveats: string[];
 }

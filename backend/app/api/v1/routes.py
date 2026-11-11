@@ -12,6 +12,9 @@ from fastapi.concurrency import run_in_threadpool
 
 from app.api.deps import Principal, optional_principal
 from app.api.v1.schemas import (
+    CompareBestOut,
+    CompareItemOut,
+    CompareResponse,
     JourneyDetailResponse,
     JourneyOut,
     LocationDetailOut,
@@ -20,11 +23,12 @@ from app.api.v1.schemas import (
     SearchResponse,
     StationOut,
 )
-from app.core.errors import NotFound, ValidationFailed
+from app.core.errors import NotFound, ProvidersUnavailable, ValidationFailed
 from app.db.repositories import ActivityRepository
 from app.db.session import transaction
 from app.domain.models import TransportMode
 from app.services.catalog import LocationCatalog
+from app.services.comparison import MAX_COMPARE, compare
 from app.services.search import SearchQuery, SearchService, SortKey
 from app.services.simulation import parse_simulations, simulated
 
@@ -176,6 +180,50 @@ async def _log_search(request: Request, principal: Principal | None, result, cha
         await run_in_threadpool(write)
     except Exception as exc:
         log.warning("search log failed: %s", type(exc).__name__)
+
+
+@router.get("/journeys/compare", response_model=CompareResponse, tags=["journeys"])
+async def compare_journeys(
+    search: Annotated[SearchService, Depends(get_search)],
+    ids: Annotated[str, Query(max_length=600, description="2-4 comma-separated journey IDs")],
+) -> CompareResponse:
+    """Re-resolves each journey from current provider data; unavailable ones are reported, not hidden."""
+    wanted = list(dict.fromkeys(i.strip() for i in ids.split(",") if i.strip()))
+    if not 2 <= len(wanted) <= MAX_COMPARE or any(len(i) > 128 for i in wanted):
+        raise ValidationFailed(
+            f"Choose between 2 and {MAX_COMPARE} journeys to compare.",
+            details=[{"field": "ids", "message": f"2-{MAX_COMPARE} distinct journey IDs."}],
+        )
+    items: list[CompareItemOut] = []
+    resolved = []
+    for jid in wanted:
+        try:
+            journey, origin, destination = await search.get_journey(jid)
+        except (NotFound, ProvidersUnavailable) as exc:
+            items.append(CompareItemOut(id=jid, available=False, reason=exc.message))
+            continue
+        resolved.append(journey)
+        items.append(
+            CompareItemOut(
+                id=jid,
+                available=True,
+                journey=JourneyOut.of(journey, origin.timezone),
+                origin=LocationOut.of(origin),
+                destination=LocationOut.of(destination),
+            )
+        )
+    result = compare(resolved)
+    return CompareResponse(
+        items=items,
+        best=CompareBestOut(
+            cheapest=result.cheapest,
+            fastest=result.fastest,
+            fewest_transfers=result.fewest_transfers,
+            earliest_departure=result.earliest_departure,
+            earliest_arrival=result.earliest_arrival,
+        ),
+        caveats=result.caveats,
+    )
 
 
 @router.get("/journeys/{journey_id}", response_model=JourneyDetailResponse, tags=["journeys"])

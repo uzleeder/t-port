@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { connection } from "next/server";
 import { Suspense } from "react";
+import { CompareTray } from "@/components/Compare";
 import { JourneyCard } from "@/components/JourneyCard";
 import { DemoNotice, LabelsHelp, StateMessage } from "@/components/Notices";
 import { RetryButton } from "@/components/RetryButton";
@@ -72,6 +73,7 @@ async function Results({ searchParams }: { searchParams: PageProps<"/search">["s
         initialModes={params.modes}
       />
       {error ? <SearchError error={error} /> : data && <ResultsBody data={data} params={params} now={now} />}
+      <CompareTray />
     </div>
   );
 }
@@ -106,6 +108,10 @@ function SearchError({ error }: { error: ApiError }) {
       )}
     </StateMessage>
   );
+}
+
+function hasFilters(p: SearchParams): boolean {
+  return Boolean(p.arriveBefore || p.maxPrice || p.departAfter || p.departBefore || p.maxTransfers === 0);
 }
 
 function ResultsBody({ data, params, now }: { data: SearchResponse; params: SearchParams; now: number }) {
@@ -152,12 +158,13 @@ function ResultsBody({ data, params, now }: { data: SearchResponse; params: Sear
       <LabelsHelp />
 
       {data.total === 0 ? (
-        <StateMessage title="No direct journeys found">
+        <StateMessage title={hasFilters(params) ? "No journeys match your filters" : "No journeys found"}>
           <p>
             The current dataset has no{" "}
             {query.modes.length ? `${query.modes.join(" / ")} ` : ""}services from{" "}
-            {query.origin.name} to {query.destination.name} on {formatDateLong(query.date)}.
-            Try another date, include more transport modes, or travel via a nearby city.
+            {query.origin.name} to {query.destination.name} on {formatDateLong(query.date)}
+            {hasFilters(params) ? " that fit the changes, arrival time or budget you set" : ""}.
+            Try another date, include more transport modes, allow more changes, or relax a filter.
           </p>
         </StateMessage>
       ) : (
@@ -183,7 +190,7 @@ function ResultsBody({ data, params, now }: { data: SearchResponse; params: Sear
           <ol className="space-y-3" aria-label="Journeys">
             {data.items.map((j) => (
               <li key={j.id}>
-                <JourneyCard journey={j} highlights={highlight(j.id)} now={now} />
+                <JourneyCard journey={j} highlights={highlight(j.id)} now={now} comparable />
               </li>
             ))}
           </ol>

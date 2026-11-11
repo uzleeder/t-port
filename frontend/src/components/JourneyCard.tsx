@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Badge, DemoBadge, FreshnessBadge, PRICE_TYPE_TEXT, PriceTypeBadge } from "./Badges";
+import { CompareToggle } from "./Compare";
 import { ModeIcon } from "./ModeIcon";
 import { dayOffset, formatDuration, formatPriceRange, localTime, MODE_LABEL, timeAgo } from "@/lib/format";
 import type { Journey } from "@/lib/types";
@@ -8,9 +9,12 @@ export function JourneyCard({
   journey,
   highlights = [],
   now,
+  comparable = false,
 }: {
   journey: Journey;
   highlights?: string[];
+  /** Show the "Compare" checkbox (search results only). */
+  comparable?: boolean;
   /** Reference time for "updated X ago" (pass from the server render; omitted = not shown). */
   now?: number;
 }) {
@@ -78,6 +82,9 @@ export function JourneyCard({
         {journey.is_demo && <DemoBadge />}
         {journey.freshness !== "fresh" && <FreshnessBadge level={journey.freshness} />}
         {!journey.is_demo && journey.price_type !== "demo" && <PriceTypeBadge type={journey.price_type} />}
+        {comparable && (
+          <CompareToggle id={journey.id} label={`${localTime(first.departure_local)} ${operators}`} />
+        )}
         <Link
           href={`/journeys/${encodeURIComponent(journey.id)}`}
           className="ml-auto text-sm font-medium text-blue after:absolute after:inset-0 after:content-[''] hover:underline"

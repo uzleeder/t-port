@@ -53,7 +53,7 @@ describe("search params", () => {
         { origin: "Tashkent", destination: "samarkand", date: "2026-11-20", modes: "bus,train,zeppelin", sort: "price", page: "2" },
         now,
       ),
-    ).toEqual({
+    ).toMatchObject({
       origin: "tashkent",
       destination: "samarkand",
       date: "2026-11-20",
@@ -68,6 +68,13 @@ describe("search params", () => {
     expect(parseSearchParams({ origin: "a", destination: "b", date: "today" }, now)?.date).toBe("2026-11-11");
     expect(parseSearchParams({ origin: "a", destination: "b", date: "12/11/2026" }, now)).toBeNull();
     expect(parseSearchParams({ origin: "a" }, now)).toBeNull();
+    const filtered = parseSearchParams(
+      { origin: "a", destination: "b", max_transfers: "2", arrive_before: "18:00", max_price: "400000", prefer_modes: "bus,rocket" },
+      now,
+    );
+    expect(filtered).toMatchObject({ maxTransfers: 2, arriveBefore: "18:00", maxPrice: "400000", preferModes: ["bus"] });
+    const junk = parseSearchParams({ origin: "a", destination: "b", max_transfers: "9", arrive_before: "25:00", max_price: "-5" }, now);
+    expect(junk).toMatchObject({ maxTransfers: 1, arriveBefore: null, maxPrice: null });
     expect(parseSearchParams({ origin: "a", destination: "b", sort: "evil" }, now)?.sort).toBe(
       "recommended",
     );
@@ -81,6 +88,9 @@ describe("search params", () => {
     expect(
       buildSearchQuery({ origin: "a", destination: "b", date: "2026-11-12", modes: ["train", "bus", "flight", "taxi"], sort: "recommended", page: 1 }),
     ).toBe("origin=a&destination=b&date=2026-11-12");
+    expect(
+      buildSearchQuery({ origin: "a", destination: "b", date: "2026-11-12", maxTransfers: 0, arriveBefore: "18:00", maxPrice: "400000" }),
+    ).toBe("origin=a&destination=b&date=2026-11-12&max_transfers=0&arrive_before=18%3A00&max_price=400000");
   });
 });
 
