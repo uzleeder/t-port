@@ -193,7 +193,7 @@ def test_synthetic_booking_provider_is_dev_only(app_factory, settings):
         )
     dev = settings.model_copy(update={"enable_synthetic_booking": True})
     with TestClient(app_factory(settings=dev)) as c:
-        j = _first(c, "synthbook")
+        j = _first(c, "synthbook", destination="namangan")
         assert j["booking_url"].startswith("https://booking.synthrail.test/book?")
         assert "TEST" in j["legs"][0]["provider"]["name"]
     with TestClient(app_factory()) as c:  # off by default
@@ -201,7 +201,7 @@ def test_synthetic_booking_provider_is_dev_only(app_factory, settings):
             s["provider"]["id"]
             for s in c.get(
                 "/api/v1/journeys/search",
-                params={"origin": "tashkent", "destination": "samarkand", "date": TOMORROW.isoformat()},
+                params={"origin": "tashkent", "destination": "namangan", "date": TOMORROW.isoformat()},
             ).json()["sources"]
         }
         assert "synthbook" not in ids

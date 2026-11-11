@@ -10,7 +10,7 @@ const EXAMPLES = [
   "Cheapest way from Tashkent to Samarkand tomorrow",
   "Fastest train to Bukhara from Tashkent on Friday",
   "Samarqanddan Buxoroga ertaga",
-  "Samarkand to Khiva tomorrow, arrive by 6 pm, fewest changes",
+  "Tashkent to Bukhara tomorrow, arrive by 6 pm, fewest changes",
   "Compare train and bus from Tashkent to Samarkand",
 ];
 

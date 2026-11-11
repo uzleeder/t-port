@@ -90,6 +90,8 @@ jobs:
       TPORT_AUTH_RATE_LIMIT_PER_MINUTE: "100"
       # Lets e2e tests exercise provider outages and stale data (forbidden in production).
       TPORT_ENABLE_FAULT_SIMULATION: "true"
+      # Fictional bookable TEST provider (booking.synthrail.test) for the booking hand-off flow.
+      TPORT_ENABLE_SYNTHETIC_BOOKING: "true"
       E2E_API_COMMAND: >-
         cd ../backend && python -m alembic upgrade head &&
         python -m uvicorn app.main:app --host 127.0.0.1 --port 8000

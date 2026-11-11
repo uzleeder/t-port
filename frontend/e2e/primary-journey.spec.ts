@@ -128,6 +128,6 @@ test("demo journeys have no booking action", async ({ page }) => {
   await expect(first.getByText("Not bookable through T-Port")).toBeVisible();
   await first.getByRole("link", { name: /View details/ }).click();
   await expect(page.getByText("Demo journeys cannot be booked.")).toBeVisible();
-  await expect(page.getByRole("link", { name: /Continue to operator/ })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Book with the operator" })).toHaveCount(0);
   await expect(page.getByText(/Source:\s*T-Port Demo Dataset/).first()).toBeVisible();
 });
