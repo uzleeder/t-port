@@ -43,6 +43,15 @@ jobs:
       - run: ruff check app tests
       - run: ruff format --check app tests
       - run: pytest -p no:cacheprovider
+      - name: Provider contract conformance (registered providers)
+        run: python -m app.cli check-provider demo --days 3
+      - name: Migrations apply cleanly to PostgreSQL and match the models
+        env:
+          TPORT_DATABASE_URL: ${{ env.TPORT_TEST_DATABASE_URL }}
+        run: |
+          alembic upgrade head
+          alembic check
+          alembic downgrade base
       - name: Dependency vulnerability audit
         run: pip-audit --skip-editable
 

@@ -1,6 +1,6 @@
 [project]
 name = "tport-backend"
-version = "0.2.0"
+version = "0.9.0"
 description = "T-Port API: deterministic multimodal transit search for Uzbekistan (Phase 1 MVP)"
 requires-python = ">=3.12"
 dependencies = [
@@ -42,7 +42,7 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "S", "ASYNC"]
-ignore = ["S101", "UP046", "B008"]
+ignore = ["S101", "UP046", "UP047", "B008"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S"]

@@ -46,15 +46,32 @@ to `*` unless every path to the API goes through a proxy that overwrites the hea
 |---|---|
 | Daily | `python -m app.cli purge-sessions` |
 | Daily | `python -m app.cli purge-activity` |
-| Every 10 min, only with `TPORT_DEMO_PROVIDER_MODE=stored` | `python -m app.cli import-demo --days 14` |
+| Every 10 min, only with `TPORT_DEMO_PROVIDER_MODE=stored` | `python -m app.cli import-demo --days 14 --trigger cron` |
+| Every 5 min | `python -m app.cli provider-health` (alert on a non-zero exit) |
 
-## Logging and health
+Import exit codes: `0` success, `1` failed (recorded in `data_imports`), `75` another import holds
+the provider's lock. Treat 75 as "skip this run", not as an error. Overlapping cron runs are safe:
+the lock guarantees one import per provider at a time, and a crashed import's lock expires after
+the contract's `lock_ttl_seconds` (15 minutes by default).
+
+## Staging
+Run a separate staging stack (same images and compose file, its own domain, database, `.env.staging`
+and ops token) and deploy every merge to `main` there before production. Restrict it to the team at
+the proxy. Provider trials and restore drills happen on staging. See [pilot-runbook.md](pilot-runbook.md).
+
+## Logging, health and metrics
 - All containers log to stdout (JSON from Caddy, plain lines from the API). Ship them to your
   platform's log store. API access logs exclude query strings, bodies and cookies.
 - `GET /health` returns `200` with database status, AI engine and providers, or `503` if the
   database is unreachable. Both Dockerfiles define container health checks.
+- With `TPORT_OPS_TOKEN` set (≥ 32 characters in production):
+  - `GET /health/providers` returns each provider's status (`healthy`, `degraded`, `down`,
+    `unknown`), with reasons, import lag, failure streaks and call counts (`503` if any is down)
+  - `GET /metrics` serves the same data in Prometheus format
+  Both need `Authorization: Bearer <token>` and return 404 without it. Scrape them over the private
+  network or through the proxy. Example alert rules are in [pilot-runbook.md](pilot-runbook.md).
 - Watch for 5xx rates, 429 spikes, `providers_unavailable`, AI `fallback` outcomes (the
-  `ai_requests` table) and import failures (`data_imports.status = 'failed'`).
+  `ai_requests` table) and import failures (`data_imports.status = 'failed'`, `rejected_records`).
 
 ## Backup and restore
 With a managed database, enable automated daily backups plus point-in-time recovery (7–30 days),

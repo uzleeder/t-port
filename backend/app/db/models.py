@@ -170,6 +170,20 @@ class DataImport(Base):
     departures_count: Mapped[int] = mapped_column(Integer, default=0)
     offers_count: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[str | None] = mapped_column(Text)
+    trigger: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
+    retries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    rejected_records: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
+class ProviderImportLock(Base):
+    """At most one import per provider at a time. A lock past ``expires_at`` may be taken over."""
+
+    __tablename__ = "provider_import_locks"
+
+    provider_id: Mapped[str] = mapped_column(ForeignKey("providers.id", ondelete="CASCADE"), primary_key=True)
+    holder: Mapped[str] = mapped_column(String(64))
+    acquired_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
 
 
 class Service(TimestampMixin, Base):

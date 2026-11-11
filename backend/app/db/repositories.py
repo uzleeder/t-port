@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable, Sequence
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.db import models as m
@@ -218,8 +219,12 @@ class TimetableRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def start_import(self, provider_id: str, source_reference: str, now: datetime) -> m.DataImport:
-        imp = m.DataImport(provider_id=provider_id, source_reference=source_reference, started_at=now)
+    def start_import(
+        self, provider_id: str, source_reference: str, now: datetime, trigger: str = "manual"
+    ) -> m.DataImport:
+        imp = m.DataImport(
+            provider_id=provider_id, source_reference=source_reference, started_at=now, trigger=trigger[:16]
+        )
         self.db.add(imp)
         self.db.flush()
         return imp
@@ -233,13 +238,53 @@ class TimetableRepository:
         offers: int,
         source_updated_at: datetime | None,
         error: str | None = None,
+        retries: int = 0,
+        rejected_records: int = 0,
     ) -> None:
         imp.finished_at = now
         imp.status = "failed" if error else "succeeded"
         imp.departures_count, imp.offers_count = departures, offers
         imp.source_updated_at = source_updated_at
         imp.error_message = error[:2000] if error else None
+        imp.retries, imp.rejected_records = retries, rejected_records
         self.db.flush()
+
+    def recent_imports(self, provider_id: str, limit: int = 20) -> list[m.DataImport]:
+        return list(
+            self.db.scalars(
+                select(m.DataImport)
+                .where(m.DataImport.provider_id == provider_id)
+                .order_by(m.DataImport.started_at.desc())
+                .limit(limit)
+            )
+        )
+
+    # -- import locks --------------------------------------------------------------------
+    def acquire_lock(self, provider_id: str, holder: str, now: datetime, ttl: timedelta) -> bool:
+        """True if ``holder`` now owns the provider's import lock (new, re-entrant or taken over)."""
+        lock = self.db.get(m.ProviderImportLock, provider_id, with_for_update=True)
+        if lock is not None and lock.holder != holder and lock.expires_at > now:
+            return False
+        try:
+            with self.db.begin_nested():  # savepoint: a lost insert race leaves the outer txn usable
+                if lock is None:
+                    self.db.add(
+                        m.ProviderImportLock(
+                            provider_id=provider_id, holder=holder, acquired_at=now, expires_at=now + ttl
+                        )
+                    )
+                else:
+                    lock.holder, lock.acquired_at, lock.expires_at = holder, now, now + ttl
+        except IntegrityError:  # another process inserted the lock first
+            return False
+        return True
+
+    def release_lock(self, provider_id: str, holder: str) -> None:
+        self.db.execute(
+            delete(m.ProviderImportLock).where(
+                m.ProviderImportLock.provider_id == provider_id, m.ProviderImportLock.holder == holder
+            )
+        )
 
     def replace_window(
         self,

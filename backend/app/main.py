@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import logging
+import secrets
 import time
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import timedelta
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -25,19 +29,21 @@ from app.core.clock import Clock, SystemClock
 from app.core.config import Settings, get_settings
 from app.core.errors import error_body, install_error_handlers
 from app.data.reference import LOCATIONS, STATIONS
-from app.db.repositories import ReferenceRepository
+from app.db.repositories import ReferenceRepository, TimetableRepository
 from app.db.session import make_engine, make_session_factory, transaction
 from app.providers.base import ProviderAdapter
+from app.providers.contracts import ProviderContract, contract_problems
 from app.providers.demo.adapter import DEMO_PROVIDER, DemoAdapter
-from app.providers.registry import REGISTRATIONS
+from app.providers.registry import CONTRACTS, DEMO_CONTRACT, contract_for
 from app.providers.stored import StoredTimetableAdapter
 from app.services.auth import AuthService
 from app.services.catalog import LocationCatalog
 from app.services.freshness import FreshnessPolicy
+from app.services.provider_health import assess_provider, overall, prometheus_metrics
 from app.services.search import SearchService
 from app.services.transfers import TransferPolicy
 
-VERSION = "0.8.0"
+VERSION = "0.9.0"
 log = logging.getLogger("tport")
 
 _UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
@@ -48,7 +54,7 @@ def seed_reference(factory: sessionmaker[Session]) -> None:
     with transaction(factory) as db:
         repo = ReferenceRepository(db)
         repo.sync_locations(LOCATIONS, STATIONS)
-        for reg in REGISTRATIONS:
+        for reg in CONTRACTS:
             repo.upsert_provider(
                 reg.info, access_basis=reg.access_basis, update_frequency=reg.update_frequency
             )
@@ -62,6 +68,7 @@ def create_app(
     session_factory: sessionmaker[Session] | None = None,
     llm: AnthropicInterpreter | None = None,
     seed: bool = True,
+    contracts: Sequence[ProviderContract] | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     clock = clock or SystemClock()
@@ -73,18 +80,34 @@ def create_app(
         )
 
     catalog = LocationCatalog(LOCATIONS, STATIONS)
+    explicit_contracts = list(contracts or [])
+    contracts = []
     if providers is None:
         providers = []
+        today = clock.now().astimezone(ZoneInfo(settings.market_timezone)).date()
         if settings.enable_demo_provider:
+            demo_contract = DEMO_CONTRACT
             if settings.demo_provider_mode == "stored":
+                demo_contract = replace(
+                    DEMO_CONTRACT, ingestion=replace(DEMO_CONTRACT.ingestion, mode="stored")
+                )
+            problems = contract_problems(demo_contract, today)
+            if problems:  # a provider never starts with an invalid contract
+                log.error("provider %s disabled: %s", demo_contract.info.id, "; ".join(problems))
+            else:
+                contracts.append(demo_contract)
                 live = DemoAdapter(catalog, clock)
                 providers.append(
                     StoredTimetableAdapter(
                         DEMO_PROVIDER, catalog, session_factory, live.supported_location_ids()
                     )
+                    if settings.demo_provider_mode == "stored"
+                    else live
                 )
-            else:
-                providers.append(DemoAdapter(catalog, clock))
+    else:
+        # Injected adapters (tests, future wiring) use the given contracts or the registry's.
+        given = {c.info.id: c for c in explicit_contracts}
+        contracts = [c for p in providers if (c := given.get(p.id) or contract_for(p.id))]
 
     if llm is None and settings.ai_engine == "anthropic":
         if settings.ai_api_key:
@@ -110,6 +133,7 @@ def create_app(
         market_timezone=settings.market_timezone,
         max_days_ahead=settings.search_max_days_ahead,
         max_page_size=settings.search_max_page_size,
+        freshness_by_provider={c.info.id: c.freshness for c in contracts},
         transfer_policy=TransferPolicy(
             same_station_minutes=settings.transfer_min_minutes_same_station,
             station_change_minutes=settings.transfer_min_minutes_station_change,
@@ -143,6 +167,7 @@ def create_app(
     app.state.clock = clock
     app.state.catalog = catalog
     app.state.providers = list(providers)
+    app.state.contracts = contracts
     app.state.session_factory = session_factory
     app.state.search = search
     app.state.auth = AuthService(timedelta(hours=settings.session_ttl_hours))
@@ -238,6 +263,52 @@ def create_app(
             ],
         )
         return JSONResponse(body.model_dump(), status_code=200 if db_ok else 503)
+
+    # --- operations endpoints (disabled unless TPORT_OPS_TOKEN is set) -----------------------
+    def _ops_authorized(request: Request) -> bool:
+        token = settings.ops_token.get_secret_value() if settings.ops_token else None
+        if not token:
+            return False
+        header = request.headers.get("authorization", "")
+        supplied = header[7:] if header.lower().startswith("bearer ") else ""
+        return bool(supplied) and secrets.compare_digest(supplied, token)
+
+    def _provider_health() -> list:
+        now = clock.now()
+        imports_by: dict[str, list] = {}
+        try:
+            with session_factory() as db:
+                repo = TimetableRepository(db)
+                for c in app.state.contracts:
+                    imports_by[c.info.id] = repo.recent_imports(c.info.id)
+        except Exception:  # noqa: BLE001 - health must still answer when the DB is down
+            log.warning("provider health: import history unavailable")
+        return [
+            assess_provider(c, search.stats.get(c.info.id), imports_by.get(c.info.id, []), now)
+            for c in app.state.contracts
+        ]
+
+    @app.get("/health/providers", include_in_schema=False)
+    def provider_health(request: Request) -> JSONResponse:
+        if not _ops_authorized(request):
+            return JSONResponse(error_body("not_found", "Not Found"), 404)
+        health = _provider_health()
+        status = overall([h.status for h in health])
+        body = {
+            "status": status,
+            "providers": [
+                {**{k: getattr(h, k) for k in h.__slots__}, "reasons": list(h.reasons)} for h in health
+            ],
+        }
+        return JSONResponse(jsonable_encoder(body), status_code=503 if status == "down" else 200)
+
+    @app.get("/metrics", include_in_schema=False)
+    def metrics(request: Request) -> Response:
+        if not _ops_authorized(request):
+            return JSONResponse(error_body("not_found", "Not Found"), 404)
+        return Response(
+            prometheus_metrics(_provider_health(), clock.now()), media_type="text/plain; version=0.0.4"
+        )
 
     @app.get("/", include_in_schema=False)
     def root() -> dict:

@@ -17,12 +17,13 @@ stay same-origin and the API is never exposed publicly.
 | Module | Responsibility | Depends on |
 |---|---|---|
 | `domain/` | Pure data types: Location, Station, Departure, Offer, Journey, Leg | nothing |
-| `providers/` | `ProviderAdapter` interface; `DemoAdapter`; `StoredTimetableAdapter`; registry | domain |
+| `providers/` | `ProviderAdapter` interface; contracts and conformance checks; `DemoAdapter`, `FeedAdapter`, `StoredTimetableAdapter`; registry | domain |
 | `services/search.py` | Validation, provider fan-out, filtering, ranking, pagination | providers, domain |
 | `services/transfers.py` | Pure connection-feasibility rules | domain, catalog |
 | `services/freshness.py` | Fresh / stale / expired policy | domain |
 | `services/auth.py` | Password hashing, sessions, CSRF checks | db |
-| `services/imports.py` | Snapshot provider data into the DB with an audit record | providers, db |
+| `services/imports.py` | Locked, bounded, retrying, validated snapshot imports with an audit record | providers, db |
+| `services/provider_health.py` | Per-provider status from call stats and import history; Prometheus output | db |
 | `ai/` | Intent schema, deterministic parser, LLM adapter, grounded explanations | services |
 | `db/` | ORM models, repositories (no business rules) | SQLAlchemy |
 | `api/` | HTTP routes, request/response schemas, dependencies | everything above |
@@ -32,7 +33,8 @@ stay same-origin and the API is never exposed publicly.
 1. **Validate**: known locations, origin ≠ destination, date between today (Asia/Tashkent) and +90 days.
 2. **Fetch**: every provider serving both cities is queried concurrently with a timeout. A failing
    provider produces a warning; if *all* fail, the API returns `503 providers_unavailable`.
-3. **Clean**: drop departures that have left, have no priced offer, or whose data is **expired**.
+3. **Clean**: drop departures that have left, have no priced offer, or whose data is **expired**
+   under *that provider's* contract (freshness is per source).
    Mixed-currency offers are dropped. **Stale** data is kept but flagged.
 4. **Compose transfers** (`max_transfers=1`, the default): for each hub city, pair scheduled first legs
    with second legs on the same or next day, keeping only connections that pass `check_connection`.

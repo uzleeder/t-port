@@ -1,34 +1,51 @@
-"""Provider registry: every data source T-Port may use, with its documented basis.
+"""Provider registry: every data source T-Port may use, declared as a ProviderContract.
 
-A provider may be enabled only when ``access_basis`` names the authorisation
-under which its data is used (licence, written agreement, open-data terms).
-No live provider is registered in Phase 1: T-Port has no confirmed agreements.
-See docs/providers.md for the onboarding checklist.
+A provider can be enabled only when ``contract_problems`` returns nothing: real sources
+need a named, verified, unexpired authorization that permits showing prices, plus a
+documented data mapping. No live provider is registered in Phase 2 because T-Port has
+no confirmed data agreements yet. See docs/providers.md for the onboarding checklist.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from datetime import date, timedelta
 
-from app.domain.models import ProviderInfo
+from app.domain.models import TransportMode
+from app.providers.contracts import (
+    Authorization,
+    Capabilities,
+    IngestionPolicy,
+    ProviderContract,
+    contract_problems,
+)
 from app.providers.demo.adapter import DEMO_PROVIDER
 
-
-@dataclass(frozen=True, slots=True)
-class ProviderRegistration:
-    info: ProviderInfo
-    access_basis: str
-    update_frequency: str | None
-    reliability_notes: str
-
-
-REGISTRATIONS: tuple[ProviderRegistration, ...] = (
-    ProviderRegistration(
-        info=DEMO_PROVIDER,
-        access_basis=(
-            "Internal simulated dataset created by T-Port. No external source; no permissions required."
-        ),
-        update_frequency="Generated on request (live mode) or per import run (stored mode).",
-        reliability_notes="Synthetic. Must never be presented as real travel information.",
+DEMO_CONTRACT = ProviderContract(
+    info=DEMO_PROVIDER,
+    authorization=Authorization(
+        basis="internal_synthetic",
+        reference="internal: backend/app/providers/demo/dataset.py",
+        attribution=DEMO_PROVIDER.attribution,
+        permits_price_display=True,
+        permits_booking_redirects=False,
     ),
+    capabilities=Capabilities(
+        modes=frozenset(TransportMode), live_prices=False, seat_availability=False, on_demand=True
+    ),
+    ingestion=IngestionPolicy(mode="live", max_concurrency=8, update_interval_minutes=10),
+    stale_after=timedelta(minutes=15),
+    expire_after=timedelta(hours=6),
+    data_mapping="Uses T-Port station IDs directly; times generated in Asia/Tashkent; UZS.",
+    reliability_notes="Synthetic. Must never be presented as real travel information.",
+    update_frequency="Generated on request (live mode) or per import run (stored mode).",
 )
+
+CONTRACTS: tuple[ProviderContract, ...] = (DEMO_CONTRACT,)
+
+
+def contract_for(provider_id: str) -> ProviderContract | None:
+    return next((c for c in CONTRACTS if c.info.id == provider_id), None)
+
+
+def enabled_contracts(today: date) -> list[ProviderContract]:
+    return [c for c in CONTRACTS if not contract_problems(c, today)]

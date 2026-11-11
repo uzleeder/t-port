@@ -87,6 +87,14 @@ python -m app.cli import-demo --days 14   # snapshot demo data into the DB (TPOR
 ```
 
 ```bash
+python -m app.cli check-provider demo     # provider contract conformance (exit 1 on violations)
+```
+
+```bash
+python -m app.cli provider-health         # per-provider status; exit 0 ok, 1 degraded, 2 down
+```
+
+```bash
 python -m app.cli purge-sessions          # remove expired/revoked sessions (run daily)
 ```
 
@@ -100,6 +108,8 @@ See [docs/deployment.md](docs/deployment.md) for HTTPS, managed PostgreSQL, logg
 
 - [Architecture](docs/architecture.md): modules, data flow, routing engine, AI boundaries
 - [API](docs/api.md): endpoints, errors, pagination, rate limits
-- [Data sources](docs/providers.md): provider adapters and the checklist for adding real data
+- [Data sources](docs/providers.md): provider contracts, adapters and the checklist for adding real data
+- [Live-data readiness](docs/live-data-readiness.md): what the ingestion pipeline guarantees today
+- [Pilot runbook](docs/pilot-runbook.md): staging, go-live checklist, alerts, incidents, rollback
 - [Security](docs/security.md): sessions, CSRF, data handling, known limitations
 - [Deployment](docs/deployment.md): production setup, HTTPS, backup and restore

@@ -6,6 +6,7 @@ import asyncio
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -20,12 +21,14 @@ from app.db.repositories import ReferenceRepository, TimetableRepository
 from app.db.session import transaction
 from app.main import seed_reference
 from app.providers.demo.adapter import DEMO_PROVIDER
+from app.providers.registry import DEMO_CONTRACT
 from app.providers.stored import StoredTimetableAdapter
 from app.services.imports import import_snapshot
 from app.services.search import SearchQuery
 from tests.conftest import NOW, TODAY, TOMORROW, make_service
 
 BACKEND = Path(__file__).resolve().parents[1]
+STORED_DEMO = replace(DEMO_CONTRACT, ingestion=replace(DEMO_CONTRACT.ingestion, mode="stored"))
 
 
 def test_migrations_upgrade_downgrade_and_match_models(tmp_path):
@@ -57,7 +60,7 @@ def test_reference_seed_is_idempotent(db_factory):
         assert db.query(m.LocationRow).count() == len(LOCATIONS)
         assert db.query(m.StationRow).count() == len(STATIONS)
         provider = db.get(m.Provider, "demo")
-        assert provider.is_demo and "simulated" in provider.access_basis.lower()
+        assert provider.is_demo and provider.access_basis.startswith("internal_synthetic")
         locs, stations = ReferenceRepository(db).load_locations()
     assert {loc.id for loc in locs} == {loc.id for loc in LOCATIONS}
 
@@ -148,7 +151,16 @@ def test_naive_datetimes_are_rejected(db_factory):
 
 def test_import_snapshot_and_stored_adapter_match_live_results(db_factory, demo, catalog, clock):
     seed_reference(db_factory)
-    summary = import_snapshot(demo, db_factory, clock, start=TODAY, days=3, source_reference="demo-test")
+    summary = import_snapshot(
+        demo,
+        db_factory,
+        clock,
+        start=TODAY,
+        days=3,
+        source_reference="demo-test",
+        contract=STORED_DEMO,
+        catalog=catalog,
+    )
     assert summary["departures"] > 0 and summary["offers"] >= summary["departures"]
     with db_factory() as db:
         imp = TimetableRepository(db).latest_import("demo")
@@ -161,7 +173,16 @@ def test_import_snapshot_and_stored_adapter_match_live_results(db_factory, demo,
     assert [(j.id, j.price) for j in live.journeys] == [(j.id, j.price) for j in from_db.journeys]
 
     # Re-import replaces the window instead of duplicating it.
-    import_snapshot(demo, db_factory, clock, start=TODAY, days=3, source_reference="demo-test")
+    import_snapshot(
+        demo,
+        db_factory,
+        clock,
+        start=TODAY,
+        days=3,
+        source_reference="demo-test",
+        contract=STORED_DEMO,
+        catalog=catalog,
+    )
     with db_factory() as db:
         assert db.query(m.DepartureRow).count() == summary["departures"]
         assert db.query(m.DataImport).count() == 2
@@ -171,7 +192,16 @@ def test_stored_data_ages_into_expiry(db_factory, demo, catalog, clock):
     from app.core.clock import FixedClock
 
     seed_reference(db_factory)
-    import_snapshot(demo, db_factory, clock, start=TODAY, days=2, source_reference="demo-test")
+    import_snapshot(
+        demo,
+        db_factory,
+        clock,
+        start=TODAY,
+        days=2,
+        source_reference="demo-test",
+        contract=STORED_DEMO,
+        catalog=catalog,
+    )
     stored = StoredTimetableAdapter(DEMO_PROVIDER, catalog, db_factory, demo.supported_location_ids())
     later = FixedClock(NOW + timedelta(hours=7))  # beyond the 6h expiry used in tests
     r = asyncio.run(

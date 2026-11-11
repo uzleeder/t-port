@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from enum import StrEnum
+from time import perf_counter
 from zoneinfo import ZoneInfo
 
 from app.core.clock import Clock
@@ -37,6 +38,7 @@ from app.domain.models import (
 from app.providers.base import ProviderAdapter, ProviderError
 from app.services.catalog import LocationCatalog
 from app.services.freshness import FreshnessPolicy, worst
+from app.services.provider_health import ProviderCallStats
 from app.services.transfers import InfeasibleTransfer, TransferPolicy, check_connection
 
 log = logging.getLogger("tport.search")
@@ -123,7 +125,11 @@ class SearchService:
         max_days_ahead: int = 90,
         max_page_size: int = 50,
         transfer_policy: TransferPolicy | None = None,
+        freshness_by_provider: dict[str, FreshnessPolicy] | None = None,
     ) -> None:
+        # Provider-specific freshness (from contracts) falls back to the global policy.
+        self._freshness_by = dict(freshness_by_provider or {})
+        self.stats: dict[str, ProviderCallStats] = {p.id: ProviderCallStats() for p in providers}
         self._transfer_policy = transfer_policy or TransferPolicy()
         self._catalog = catalog
         self._providers = {p.id: p for p in providers}
@@ -132,6 +138,12 @@ class SearchService:
         self._tz = ZoneInfo(market_timezone)
         self._max_days_ahead = max_days_ahead
         self._max_page_size = max_page_size
+
+    def policy_for(self, provider_id: str) -> FreshnessPolicy:
+        return self._freshness_by.get(provider_id, self._freshness)
+
+    def _assess(self, record: Departure | Offer, now: datetime) -> Freshness:
+        return self.policy_for(record.provider_id).assess(record.retrieved_at, now)
 
     # -- validation -------------------------------------------------------------
     def today(self) -> date:
@@ -211,7 +223,7 @@ class SearchService:
                     provider.info,
                     True,
                     newest,
-                    self._freshness.assess(newest, now) if newest else None,
+                    self.policy_for(provider.id).assess(newest, now) if newest else None,
                 )
             )
             journeys.extend(self._compose_direct(provider, departures, offers, now, excluded))
@@ -226,7 +238,9 @@ class SearchService:
             for provider, newest in used.items():
                 if provider.id not in known:
                     sources.append(
-                        SourceStatus(provider.info, True, newest, self._freshness.assess(newest, now))
+                        SourceStatus(
+                            provider.info, True, newest, self.policy_for(provider.id).assess(newest, now)
+                        )
                     )
 
         if q.max_price is not None:
@@ -262,11 +276,17 @@ class SearchService:
         self, provider: ProviderAdapter, q: SearchQuery
     ) -> tuple[Sequence[Departure], Sequence[Offer]]:
         timeout = provider.rate_limit.timeout_seconds
-        departures = await asyncio.wait_for(
-            provider.get_departures(q.origin_id, q.destination_id, q.travel_date, q.modes),
-            timeout,
-        )
-        offers = await asyncio.wait_for(provider.get_offers([d.id for d in departures]), timeout)
+        stats = self.stats.setdefault(provider.id, ProviderCallStats())
+        started = perf_counter()
+        try:
+            departures = await asyncio.wait_for(
+                provider.get_departures(q.origin_id, q.destination_id, q.travel_date, q.modes), timeout
+            )
+            offers = await asyncio.wait_for(provider.get_offers([d.id for d in departures]), timeout)
+        except Exception as exc:
+            stats.failure(exc, self._clock.now())
+            raise
+        stats.success((perf_counter() - started) * 1000, self._clock.now())
         return departures, offers
 
     def _compose_direct(
@@ -300,8 +320,8 @@ class SearchService:
         if dep.departure_utc is not None and dep.departure_utc <= now:
             excluded.already_departed += 1
             return None
-        usable = [o for o in offers if self._freshness.assess(o.retrieved_at, now) != Freshness.EXPIRED]
-        if self._freshness.assess(dep.retrieved_at, now) == Freshness.EXPIRED or (offers and not usable):
+        usable = [o for o in offers if self._assess(o, now) != Freshness.EXPIRED]
+        if self._assess(dep, now) == Freshness.EXPIRED or (offers and not usable):
             excluded.expired_data += 1
             return None
         if not usable:
@@ -402,7 +422,7 @@ class SearchService:
             total += cheapest.price
             total_max += cheapest.price_max or cheapest.price
             any_estimate |= cheapest.is_estimate
-            fresh = worst(*(self._freshness.assess(x.retrieved_at, now) for x in (dep, *offers)))
+            fresh = worst(*(self._assess(x, now) for x in (dep, *offers)))
             legs.append(Leg(dep, o_st, d_st, tuple(offers), fresh))
         if len(currencies) != 1:
             return None
@@ -449,7 +469,7 @@ class SearchService:
             return None
         cheapest = offers[0]
         freshness = max(
-            (self._freshness.assess(x.retrieved_at, now) for x in (dep, *offers)),
+            (self._assess(x, now) for x in (dep, *offers)),
             key=[Freshness.FRESH, Freshness.STALE, Freshness.EXPIRED].index,
         )
         notes: list[str] = []
