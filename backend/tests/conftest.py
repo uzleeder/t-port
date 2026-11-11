@@ -184,3 +184,51 @@ def offer(
         retrieved_at=retrieved_at,
         booking_url=booking_url,
     )
+
+
+# --- synthetic non-demo provider (fixture feed + test-only contract) ---------------------------
+import json  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from app.providers.contracts import Authorization, Capabilities, IngestionPolicy, ProviderContract  # noqa: E402
+from app.providers.feed import FeedAdapter  # noqa: E402
+
+FIXTURES = Path(__file__).parent / "fixtures"
+SYNTH_INFO = ProviderInfo(
+    "synthrail",
+    "SynthRail (test fixture)",
+    False,
+    "Timetable: SynthRail (test fixture)",
+    frozenset({"tickets.synthrail.test"}),
+)
+SYNTH_CONTRACT = ProviderContract(
+    info=SYNTH_INFO,
+    authorization=Authorization(
+        basis="written_agreement",
+        reference="TEST-ONLY-0001",
+        attribution=SYNTH_INFO.attribution,
+        permits_price_display=True,
+        permits_booking_redirects=True,
+        verified_by="QA reviewer",
+        verified_on=date(2026, 11, 1),
+        expires_on=date(2027, 11, 1),
+    ),
+    capabilities=Capabilities(
+        modes=frozenset({TransportMode.TRAIN, TransportMode.BUS}), live_prices=False, seat_availability=False
+    ),
+    ingestion=IngestionPolicy(
+        mode="stored", max_concurrency=3, max_attempts=3, backoff_seconds=0.5, update_interval_minutes=60
+    ),
+    stale_after=timedelta(hours=1),
+    expire_after=timedelta(hours=24),
+    data_mapping="Feed uses T-Port station IDs; times local to Asia/Tashkent; UZS.",
+)
+
+
+def synth_feed() -> dict:
+    return json.loads((FIXTURES / "synthetic_rail_feed.json").read_text(encoding="utf-8"))
+
+
+@pytest.fixture
+def synth(catalog, clock) -> FeedAdapter:
+    return FeedAdapter(SYNTH_INFO, synth_feed(), catalog, clock)

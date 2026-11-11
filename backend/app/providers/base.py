@@ -55,6 +55,14 @@ class ProviderAdapter(ABC):
     def supported_location_ids(self) -> frozenset[str]:
         """Canonical location IDs this provider can serve (location lookup)."""
 
+    def served_routes(self) -> frozenset[tuple[str, str]] | None:
+        """(origin, destination) location pairs the source actually serves, if known.
+
+        Importers use this to query only real routes instead of every pair of supported
+        locations (which grows quadratically). Return None when the source can't say.
+        """
+        return None
+
     @abstractmethod
     async def get_departures(
         self,

@@ -43,9 +43,16 @@ class DemoAdapter(ProviderAdapter):
                     raise ValueError(f"Demo template {tpl.code} uses unknown station {sid}")
                 locs.add(station.location_id)
         self._locations = frozenset(locs)
+        self._routes = frozenset(
+            (self._location_of(t.origin_station), self._location_of(t.destination_station))
+            for t in ds.TEMPLATES
+        )
 
     def supported_location_ids(self) -> frozenset[str]:
         return self._locations
+
+    def served_routes(self) -> frozenset[tuple[str, str]]:
+        return self._routes
 
     # -- departures --------------------------------------------------------------
     def _location_of(self, station_id: str) -> str:

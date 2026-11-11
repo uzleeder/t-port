@@ -1,0 +1,24 @@
+{
+  "feed_version": "synthrail-fixture-2026.11",
+  "generated_at": "2026-11-10T00:00:00Z",
+  "timezone": "Asia/Tashkent",
+  "currency": "UZS",
+  "booking_url_template": "https://tickets.synthrail.test/book?service={service}&date={date}",
+  "services": [
+    {"code": "SR201", "mode": "train", "operator": "SynthRail (test fixture)", "from": "tashkent-rail", "to": "samarkand-rail",
+     "depart": "07:15", "minutes": 125, "days": [0, 1, 2, 3, 4, 5, 6],
+     "fares": [{"name": "Economy", "price": "250000.00"}, {"name": "Business", "price": "410000.00"}]},
+    {"code": "SR202", "mode": "train", "operator": "SynthRail (test fixture)", "from": "samarkand-rail", "to": "tashkent-rail",
+     "depart": "18:40", "minutes": 125, "days": [0, 1, 2, 3, 4, 5, 6],
+     "fares": [{"name": "Economy", "price": "250000.00"}]},
+    {"code": "SR211", "mode": "train", "operator": "SynthRail (test fixture)", "from": "tashkent-rail", "to": "bukhara-rail",
+     "depart": "06:50", "minutes": 230, "days": [0, 2, 4, 6],
+     "fares": [{"name": "Economy", "price": "380000.00"}]},
+    {"code": "SR212", "mode": "train", "operator": "SynthRail (test fixture)", "from": "bukhara-rail", "to": "tashkent-rail",
+     "depart": "15:30", "minutes": 230, "days": [0, 2, 4, 6],
+     "fares": [{"name": "Economy", "price": "380000.00"}]},
+    {"code": "SB301", "mode": "bus", "operator": "SynthRail Coaches (test fixture)", "from": "tashkent-bus", "to": "samarkand-bus",
+     "depart": "13:00", "minutes": 290, "days": [0, 1, 2, 3, 4, 5, 6],
+     "fares": [{"name": "Standard", "price": "85000.00"}]}
+  ]
+}
