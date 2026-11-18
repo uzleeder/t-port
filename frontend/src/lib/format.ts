@@ -88,6 +88,7 @@ export const SORT_LABEL: Record<SortKey, string> = {
   price: "Lowest price",
   duration: "Shortest duration",
   departure: "Earliest departure",
+  transfers: "Fewest changes",
 };
 
 export interface SearchParams {
@@ -97,6 +98,28 @@ export interface SearchParams {
   modes: Mode[]; // empty = all
   sort: SortKey;
   page: number;
+  /** Filters (Phase 3). Defaults: up to 1 change, no deadline, no budget, no window, no preference. */
+  maxTransfers?: 0 | 1 | 2;
+  arriveBefore?: string | null; // HH:MM local at the destination
+  departAfter?: string | null;
+  departBefore?: string | null;
+  maxPrice?: string | null; // UZS
+  preferModes?: Mode[];
+}
+
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const AMOUNT = /^\d{1,12}(\.\d{1,2})?$/;
+
+function clock(v: string): string | null {
+  return HHMM.test(v) ? v : null;
+}
+
+function modeList(v: string): Mode[] {
+  const modes = v
+    .split(",")
+    .map((m) => m.trim().toLowerCase())
+    .filter((m): m is Mode => (ALL_MODES as string[]).includes(m));
+  return [...new Set(modes)];
 }
 
 type RawParams = Record<string, string | string[] | undefined>;
@@ -117,14 +140,27 @@ export function parseSearchParams(raw: RawParams, now: Date = new Date()): Searc
         ? marketToday(now)
         : dateRaw;
   if (!origin || !destination || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-  const modes = first(raw.modes)
-    .split(",")
-    .map((m) => m.trim().toLowerCase())
-    .filter((m): m is Mode => (ALL_MODES as string[]).includes(m));
+  const modes = modeList(first(raw.modes));
   const sortRaw = first(raw.sort) as SortKey;
   const sort: SortKey = sortRaw in SORT_LABEL ? sortRaw : "recommended";
   const page = Math.max(1, Math.min(1000, Number.parseInt(first(raw.page) || "1", 10) || 1));
-  return { origin, destination, date, modes: [...new Set(modes)], sort, page };
+  const transfersRaw = first(raw.max_transfers);
+  const maxTransfers = transfersRaw === "0" ? 0 : transfersRaw === "2" ? 2 : 1;
+  const priceRaw = first(raw.max_price);
+  return {
+    origin,
+    destination,
+    date,
+    modes,
+    sort,
+    page,
+    maxTransfers,
+    arriveBefore: clock(first(raw.arrive_before)),
+    departAfter: clock(first(raw.depart_after)),
+    departBefore: clock(first(raw.depart_before)),
+    maxPrice: AMOUNT.test(priceRaw) && Number(priceRaw) > 0 ? priceRaw : null,
+    preferModes: modeList(first(raw.prefer_modes)),
+  };
 }
 
 /** Builds the query string shared by the /search page URL and the API call. */
@@ -137,6 +173,12 @@ export function buildSearchQuery(p: Partial<SearchParams>): string {
     qs.set("modes", [...p.modes].sort().join(","));
   }
   if (p.sort && p.sort !== "recommended") qs.set("sort", p.sort);
+  if (p.maxTransfers !== undefined && p.maxTransfers !== 1) qs.set("max_transfers", String(p.maxTransfers));
+  if (p.arriveBefore) qs.set("arrive_before", p.arriveBefore);
+  if (p.departAfter) qs.set("depart_after", p.departAfter);
+  if (p.departBefore) qs.set("depart_before", p.departBefore);
+  if (p.maxPrice) qs.set("max_price", p.maxPrice);
+  if (p.preferModes && p.preferModes.length > 0) qs.set("prefer_modes", [...p.preferModes].sort().join(","));
   if (p.page && p.page > 1) qs.set("page", String(p.page));
   return qs.toString();
 }
@@ -146,4 +188,15 @@ export function safeNextPath(next: string | null | undefined): string | null {
   if (!next || !next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\")) return null;
   if (/[\r\n\t]/.test(next) || next.length > 512) return null;
   return next;
+}
+
+/** "3 min ago" style age; null without a reference time (keeps renders deterministic). */
+export function timeAgo(iso: string | null | undefined, now: number | undefined): string | null {
+  if (!iso || now === undefined) return null;
+  const minutes = Math.max(0, Math.round((now - new Date(iso).getTime()) / 60_000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} h ago`;
+  return `${Math.round(hours / 24)} days ago`;
 }

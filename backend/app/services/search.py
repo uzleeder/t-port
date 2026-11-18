@@ -15,7 +15,7 @@ import logging
 import re
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from enum import StrEnum
@@ -31,14 +31,17 @@ from app.domain.models import (
     Leg,
     Location,
     Offer,
+    PriceType,
     ProviderInfo,
     ScheduleType,
     TransportMode,
 )
 from app.providers.base import ProviderAdapter, ProviderError
 from app.services.catalog import LocationCatalog
-from app.services.freshness import FreshnessPolicy, worst
+from app.services.freshness import FreshnessPolicy, SourcePolicy, worst
+from app.services.journey_graph import GraphLimits, JourneyGraph
 from app.services.provider_health import ProviderCallStats
+from app.services.route_optimizer import pareto_front, preference_bonus
 from app.services.transfers import InfeasibleTransfer, TransferPolicy, check_connection
 
 log = logging.getLogger("tport.search")
@@ -46,7 +49,8 @@ log = logging.getLogger("tport.search")
 _JOURNEY_ID = re.compile(r"^(?P<provider>[a-z0-9-]{1,32})~(?P<departure>[A-Za-z0-9._-]{1,64})$")
 _LEG_REF = r"[a-z0-9-]{1,32}:[A-Za-z0-9._-]{1,48}"
 _MULTI_ID = re.compile(rf"^x~(?P<legs>{_LEG_REF}(?:\+{_LEG_REF}){{1,2}})$")
-_MAX_TRANSFER_JOURNEYS = 12
+_MAX_TRANSFER_JOURNEYS = 20
+_PRICE_ORDER = [PriceType.CONFIRMED, PriceType.INDICATIVE, PriceType.ESTIMATED, PriceType.DEMO]
 
 
 class SortKey(StrEnum):
@@ -54,6 +58,7 @@ class SortKey(StrEnum):
     PRICE = "price"
     DURATION = "duration"
     DEPARTURE = "departure"
+    TRANSFERS = "transfers"  # fewest transfers, then fastest, then cheapest
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,7 +72,9 @@ class SearchQuery:
     # Local departure-time window at the origin, [after, before). On-demand services always match.
     depart_after: time | None = None
     depart_before: time | None = None
-    max_transfers: int = 1  # 0 = direct only
+    max_transfers: int = 1  # 0 = direct only, at most 2
+    prefer_modes: frozenset[TransportMode] = frozenset()  # boosts "recommended" ranking only
+    arrive_before: time | None = None  # local time at the destination on the travel date
     page: int = 1
     page_size: int = 20
 
@@ -125,12 +132,19 @@ class SearchService:
         max_days_ahead: int = 90,
         max_page_size: int = 50,
         transfer_policy: TransferPolicy | None = None,
-        freshness_by_provider: dict[str, FreshnessPolicy] | None = None,
+        graph_limits: GraphLimits | None = None,
+        freshness_by_provider: dict[str, FreshnessPolicy | SourcePolicy] | None = None,
     ) -> None:
-        # Provider-specific freshness (from contracts) falls back to the global policy.
-        self._freshness_by = dict(freshness_by_provider or {})
+        # Provider-specific policies (from contracts) fall back to the global freshness policy.
+        self._sources: dict[str, SourcePolicy] = {
+            pid: p if isinstance(p, SourcePolicy) else SourcePolicy(p, p)
+            for pid, p in (freshness_by_provider or {}).items()
+        }
         self.stats: dict[str, ProviderCallStats] = {p.id: ProviderCallStats() for p in providers}
         self._transfer_policy = transfer_policy or TransferPolicy()
+        self._graph_limits = graph_limits or GraphLimits()
+        # Static providers => build the graph once; it is rebuilt per search otherwise.
+        self._graph = JourneyGraph.from_providers(providers) if providers else None
         self._catalog = catalog
         self._providers = {p.id: p for p in providers}
         self._clock = clock
@@ -139,11 +153,57 @@ class SearchService:
         self._max_days_ahead = max_days_ahead
         self._max_page_size = max_page_size
 
+    def source_policy(self, provider_id: str) -> SourcePolicy:
+        return self._sources.get(provider_id) or SourcePolicy(self._freshness, self._freshness)
+
     def policy_for(self, provider_id: str) -> FreshnessPolicy:
-        return self._freshness_by.get(provider_id, self._freshness)
+        """Timetable freshness policy for a provider."""
+        return self.source_policy(provider_id).timetable
 
     def _assess(self, record: Departure | Offer, now: datetime) -> Freshness:
-        return self.policy_for(record.provider_id).assess(record.retrieved_at, now)
+        """Timetable policy for departures, price policy for offers, on the contract's timestamp."""
+        sp = self.source_policy(record.provider_id)
+        policy = sp.price if isinstance(record, Offer) else sp.timetable
+        ts = record.source_updated_at if sp.basis == "source_updated_at" else record.retrieved_at
+        return policy.assess(ts, now)
+
+    def _make_leg(
+        self, provider: ProviderAdapter, dep: Departure, offers: list[Offer], now: datetime
+    ) -> Leg | None:
+        o_st = self._catalog.station(dep.origin_station_id)
+        d_st = self._catalog.station(dep.destination_station_id)
+        if o_st is None or d_st is None:
+            log.warning("departure %s references unknown station", dep.id)
+            return None
+        offers = sorted(offers, key=lambda o: (o.price, o.fare_name))
+        timetable = self._assess(dep, now)
+        price = worst(*(self._assess(o, now) for o in offers))
+        cheapest = offers[0]
+        if provider.info.is_demo:
+            ptype = PriceType.DEMO
+        elif cheapest.is_estimate:
+            ptype = PriceType.ESTIMATED
+        elif self.source_policy(provider.id).live_prices and price == Freshness.FRESH:
+            ptype = PriceType.CONFIRMED
+        else:
+            ptype = PriceType.INDICATIVE
+        return Leg(
+            dep, o_st, d_st, tuple(offers), worst(timetable, price), provider.info, timetable, price, ptype
+        )
+
+    def _booking(self, provider: ProviderAdapter, leg: Leg) -> tuple[str | None, str | None]:
+        """(booking_url, note). Never for demo data; withheld when the price can't be trusted."""
+        if provider.info.is_demo:
+            return None, "Demo journeys cannot be booked."
+        url = provider.validate_booking_url(leg.offers[0].booking_url)
+        if url is None:
+            return None, "This provider has not authorised booking links for this journey."
+        if (
+            self.source_policy(provider.id).booking_requires_fresh_price
+            and leg.price_freshness != Freshness.FRESH
+        ):
+            return None, "Booking link hidden: the price data is out of date. Check the operator directly."
+        return url, None
 
     # -- validation -------------------------------------------------------------
     def today(self) -> date:
@@ -181,8 +241,8 @@ class SearchService:
             )
         if not 1 <= q.page_size <= self._max_page_size:
             errors.append({"field": "page_size", "message": f"Must be 1-{self._max_page_size}."})
-        if q.max_transfers not in (0, 1):
-            errors.append({"field": "max_transfers", "message": "Must be 0 or 1."})
+        if q.max_transfers not in (0, 1, 2):
+            errors.append({"field": "max_transfers", "message": "Must be 0, 1 or 2."})
         if q.page < 1:
             errors.append({"field": "page", "message": "Must be >= 1."})
         if q.depart_after and q.depart_before and q.depart_after >= q.depart_before:
@@ -247,6 +307,11 @@ class SearchService:
             within = [j for j in journeys if j.price <= q.max_price]
             excluded.over_budget += len(journeys) - len(within)
             journeys = within
+        if q.arrive_before is not None:
+            deadline = datetime.combine(q.travel_date, q.arrive_before, ZoneInfo(destination.timezone))
+            within = [j for j in journeys if j.arrival_utc is not None and j.arrival_utc <= deadline]
+            excluded.outside_time_window += len(journeys) - len(within)  # unknown arrival = excluded
+            journeys = within
         if q.depart_after is not None or q.depart_before is not None:
             tz = ZoneInfo(origin.timezone)
             within = [j for j in journeys if _in_window(j, tz, q.depart_after, q.depart_before)]
@@ -258,7 +323,7 @@ class SearchService:
         if any(j.freshness == Freshness.STALE for j in journeys):
             warnings.append("Some options use data that may be out of date. Verify before travel.")
 
-        ranked = rank(journeys, q.sort)
+        ranked = rank(journeys, q.sort, q.prefer_modes)
         start = (q.page - 1) * q.page_size
         return SearchResult(
             query=q,
@@ -346,6 +411,9 @@ class SearchService:
         for provider in self._providers.values():
             if not {origin_id, destination_id} <= provider.supported_location_ids():
                 continue
+            served = provider.served_routes()
+            if served is not None and (origin_id, destination_id) not in served:
+                continue
             try:
                 deps, offers = await self._fetch(
                     provider, SearchQuery(origin_id, destination_id, day, modes=modes)
@@ -369,38 +437,53 @@ class SearchService:
     async def _compose_transfers(
         self, q: SearchQuery, origin: Location, destination: Location, now: datetime
     ) -> tuple[list[Journey], dict[ProviderAdapter, datetime]]:
-        providers = list(self._providers.values())
-        hubs = [
-            loc
-            for loc in self._catalog.search(None)
-            if loc.id not in (origin.id, destination.id)
-            and any({origin.id, loc.id} <= p.supported_location_ids() for p in providers)
-            and any({loc.id, destination.id} <= p.supported_location_ids() for p in providers)
-        ]
+        """Connections with 1..max_transfers changes over the bounded journey graph (see journey_graph)."""
+        limits = replace(self._graph_limits, max_legs=q.max_transfers + 1)
+        graph = self._graph or JourneyGraph.from_providers(self._providers.values())
         cache: dict = {}
         candidates: list[Journey] = []
         used: dict[ProviderAdapter, datetime] = {}
-        for hub in hubs:
-            firsts = await self._legs(cache, origin.id, hub.id, q.travel_date, q.modes, now)
-            if not firsts:
-                continue
-            seconds = []
-            for day in (q.travel_date, q.travel_date + timedelta(days=1)):
-                seconds += await self._legs(cache, hub.id, destination.id, day, q.modes, now)
-            for p1, d1, o1 in firsts:
-                for p2, d2, o2 in seconds:
-                    try:
-                        check = check_connection(d1, d2, self._catalog, self._transfer_policy)
-                    except InfeasibleTransfer:
-                        continue
-                    journey = self._build_multi([(p1, d1, o1), (p2, d2, o2)], [check], now)
-                    if journey is None:
-                        continue
-                    candidates.append(journey)
-                    for p, d in ((p1, d1), (p2, d2)):
-                        used[p] = max(used.get(p, d.retrieved_at), d.retrieved_at)
-        # Keep the best few connections, deterministically.
-        candidates.sort(key=lambda j: (j.total_minutes, j.price, j.id))
+        Part = tuple[ProviderAdapter, Departure, list[Offer]]
+        for path in graph.location_paths(origin.id, destination.id, limits):
+            firsts = await self._legs(cache, path[0], path[1], q.travel_date, q.modes, now)
+            chains: list[tuple[list[Part], list]] = [([leg], []) for leg in firsts]
+            for hop in range(1, len(path) - 1):
+                hub = self._catalog.get(path[hop])
+                tz = ZoneInfo(hub.timezone if hub else "UTC")
+                extended: list[tuple[list[Part], list]] = []
+                for parts, checks in chains:
+                    last = parts[-1][1]
+                    arrival_day = last.arrival_utc.astimezone(tz).date()  # scheduled legs only
+                    options: list[Part] = []
+                    for day in (arrival_day, arrival_day + timedelta(days=1)):
+                        options += await self._legs(cache, path[hop], path[hop + 1], day, q.modes, now)
+                    feasible = []
+                    for leg in options:
+                        try:
+                            feasible.append(
+                                (leg, check_connection(last, leg[1], self._catalog, self._transfer_policy))
+                            )
+                        except InfeasibleTransfer:
+                            continue
+                    feasible.sort(key=lambda x: (x[0][1].departure_utc, x[0][0].id, x[0][1].id))
+                    extended += [(parts + [leg], checks + [chk]) for leg, chk in feasible[: limits.per_step]]
+                    if len(extended) >= limits.max_candidates:
+                        break
+                chains = extended
+                if not chains:
+                    break
+            for parts, checks in chains:
+                if len(parts) != len(path) - 1:
+                    continue
+                journey = self._build_multi(parts, checks, now)
+                if journey is None:
+                    continue
+                candidates.append(journey)
+                for p, d, _ in parts:
+                    used[p] = max(used.get(p, d.retrieved_at), d.retrieved_at)
+        # Drop connections dominated by another connection (price, time, transfers), then cap.
+        candidates = pareto_front(candidates)
+        candidates.sort(key=lambda j: (j.transfers, j.total_minutes, j.price, j.id))
         return candidates[:_MAX_TRANSFER_JOURNEYS], used
 
     def _build_multi(
@@ -411,19 +494,18 @@ class SearchService:
         total_max = Decimal(0)
         any_estimate = False
         currencies: set[str] = set()
-        for _provider, dep, offers in parts:
-            o_st = self._catalog.station(dep.origin_station_id)
-            d_st = self._catalog.station(dep.destination_station_id)
-            if o_st is None or d_st is None:
+        if len({p.info.is_demo for p, _, _ in parts}) > 1:
+            return None  # never present a demo leg and a real leg as one journey
+        for provider, dep, offers in parts:
+            leg = self._make_leg(provider, dep, offers, now)
+            if leg is None:
                 return None
-            offers = sorted(offers, key=lambda o: (o.price, o.fare_name))
-            cheapest = offers[0]
+            cheapest = leg.offers[0]
             currencies |= {o.currency for o in offers}
             total += cheapest.price
             total_max += cheapest.price_max or cheapest.price
             any_estimate |= cheapest.is_estimate
-            fresh = worst(*(self._assess(x, now) for x in (dep, *offers)))
-            legs.append(Leg(dep, o_st, d_st, tuple(offers), fresh))
+            legs.append(leg)
         if len(currencies) != 1:
             return None
         first, last = legs[0].departure, legs[-1].departure
@@ -452,44 +534,43 @@ class SearchService:
             booking_url=None,  # each leg is booked separately
             notes=tuple(notes),
             transfer_checks=tuple(checks),
+            price_type=max((leg.price_type for leg in legs), key=_PRICE_ORDER.index),
+            booking_note="Each leg is booked separately with its own operator.",
         )
 
     def _build_journey(
         self, provider: ProviderAdapter, dep: Departure, offers: list[Offer], now: datetime
     ) -> Journey | None:
-        origin = self._catalog.station(dep.origin_station_id)
-        destination = self._catalog.station(dep.destination_station_id)
-        if origin is None or destination is None:
-            log.warning("departure %s references unknown station", dep.id)
-            return None
-        offers = sorted(offers, key=lambda o: (o.price, o.fare_name))
-        currencies = {o.currency for o in offers}
-        if len(currencies) != 1:
+        if len({o.currency for o in offers}) != 1:
             log.warning("departure %s has mixed currencies; skipped", dep.id)
             return None
-        cheapest = offers[0]
-        freshness = max(
-            (self._assess(x, now) for x in (dep, *offers)),
-            key=[Freshness.FRESH, Freshness.STALE, Freshness.EXPIRED].index,
-        )
+        leg = self._make_leg(provider, dep, offers, now)
+        if leg is None:
+            return None
+        cheapest = leg.offers[0]
         notes: list[str] = []
         if cheapest.is_estimate:
             notes.append("Price is an estimate range; confirm the fare with the driver/operator.")
         if dep.departure_utc is None:
             notes.append("On-demand service: departure time is arranged directly.")
+        if leg.freshness == Freshness.UNKNOWN:
+            notes.append("The source did not say when this data was last updated. Verify before travel.")
+        booking_url, booking_note = self._booking(provider, leg)
         return Journey(
             id=f"{provider.id}~{dep.id}",
-            legs=(Leg(dep, origin, destination, tuple(offers), freshness),),
+            legs=(leg,),
             price=cheapest.price,
             price_max=cheapest.price_max,
             currency=cheapest.currency,
             is_price_estimate=cheapest.is_estimate,
             travel_minutes=dep.duration_minutes,
             total_minutes=dep.duration_minutes,
-            freshness=freshness,
+            freshness=leg.freshness,
             is_demo=provider.info.is_demo,
-            booking_url=provider.validate_booking_url(cheapest.booking_url),
+            booking_url=booking_url,
             notes=tuple(notes),
+            price_type=leg.price_type,
+            booking_note=booking_note,
         )
 
     # -- detail ---------------------------------------------------------------------
@@ -591,12 +672,16 @@ def _departure_key(j: Journey) -> datetime:
     return j.departure_utc or _FAR_FUTURE
 
 
-def rank(journeys: list[Journey], sort: SortKey) -> list[Journey]:
+def rank(
+    journeys: list[Journey], sort: SortKey, prefer: frozenset[TransportMode] = frozenset()
+) -> list[Journey]:
     """Stable, fully deterministic ordering. Final tiebreaker is the journey ID."""
     if sort == SortKey.PRICE:
         key = lambda j: (j.price, j.total_minutes, _departure_key(j), j.id)  # noqa: E731
     elif sort == SortKey.DURATION:
         key = lambda j: (j.total_minutes, j.price, _departure_key(j), j.id)  # noqa: E731
+    elif sort == SortKey.TRANSFERS:
+        key = lambda j: (j.transfers, j.total_minutes, j.price, j.id)  # noqa: E731
     elif sort == SortKey.DEPARTURE:
         key = lambda j: (_departure_key(j), j.price, j.id)  # noqa: E731
     else:
@@ -612,6 +697,7 @@ def rank(journeys: list[Journey], sort: SortKey) -> list[Journey]:
             s += Decimal("0.15") * j.transfers
             if j.is_price_estimate:
                 s += Decimal("0.10")
+            s -= preference_bonus(j, prefer)
             return (s.quantize(Decimal("0.0001")), _departure_key(j), j.id)
 
         key = score

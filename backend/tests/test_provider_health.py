@@ -18,10 +18,17 @@ from tests.conftest import NOW, SYNTH_CONTRACT, TOMORROW, FakeAdapter
 TOKEN = "t" * 40
 
 
-def _imp(status: str, minutes_ago: float) -> m.DataImport:
+def _imp(status: str, minutes_ago: float, departures: int = 40, offers: int = 50) -> m.DataImport:
     t = NOW - timedelta(minutes=minutes_ago)
     return m.DataImport(
-        provider_id="synthrail", source_reference="x", status=status, started_at=t, finished_at=t
+        provider_id="synthrail",
+        source_reference="x",
+        status=status,
+        started_at=t,
+        finished_at=t,
+        departures_count=departures,
+        offers_count=offers,
+        rejected_records=0,
     )
 
 
@@ -38,10 +45,10 @@ def _stats(ok: int, failed: int) -> ProviderCallStats:
     ("imports", "status", "reason"),
     [
         ([], "unknown", "no successful import"),
-        ([_imp("failed", 5), _imp("failed", 70)], "down", "no successful import"),
+        ([_imp("failed", 5), _imp("failed", 70)], "unavailable", "no successful import"),
         ([_imp("succeeded", 10)], "healthy", "ok"),
         ([_imp("succeeded", 90)], "degraded", "imports are late"),  # stale after 1 h
-        ([_imp("succeeded", 25 * 60)], "down", "expiry limit"),  # expired after 24 h
+        ([_imp("succeeded", 25 * 60)], "unavailable", "expiry limit"),  # expired after 24 h
         (
             [_imp("failed", 3), _imp("failed", 6), _imp("failed", 9), _imp("succeeded", 12)],
             "degraded",
@@ -62,7 +69,7 @@ def test_import_lag_and_streak_are_reported():
 
 @pytest.mark.parametrize(
     ("ok", "failed", "status"),
-    [(0, 0, "unknown"), (2, 2, "healthy"), (9, 1, "degraded"), (5, 5, "down"), (20, 0, "healthy")],
+    [(0, 0, "unknown"), (2, 2, "healthy"), (9, 1, "degraded"), (5, 5, "unavailable"), (20, 0, "healthy")],
 )
 def test_live_provider_health_from_call_failures(ok, failed, status):
     assert assess_provider(DEMO_CONTRACT, _stats(ok, failed), [], NOW).status == status
@@ -70,7 +77,8 @@ def test_live_provider_health_from_call_failures(ok, failed, status):
 
 def test_overall_takes_the_worst_status():
     assert overall(["healthy", "degraded", "unknown"]) == "degraded"
-    assert overall(["healthy", "down"]) == "down"
+    assert overall(["healthy", "unavailable"]) == "unavailable"
+    assert overall(["healthy", "disabled"]) == "healthy"  # switched-off sources aren't outages
     assert overall([]) == "healthy"
 
 
@@ -127,8 +135,8 @@ def test_provider_outage_is_observable_and_isolated(app_factory, ops_settings, d
         metrics = c.get("/metrics", headers=auth).text
     body = {p["provider_id"]: p for p in health.json()["providers"]}
     assert body["demo"]["status"] == "healthy"
-    assert body["synthrail"]["status"] == "down" and body["synthrail"]["failures_total"] == 5
-    assert health.status_code == 503 and health.json()["status"] == "down"
+    assert body["synthrail"]["status"] == "unavailable" and body["synthrail"]["failures_total"] == 5
+    assert health.status_code == 503 and health.json()["status"] == "unavailable"
     assert 'tport_provider_failures_total{provider="synthrail"} 5' in metrics
 
 
@@ -152,3 +160,95 @@ def test_stored_mode_contract_is_used_for_health(app_factory, ops_settings, db_f
     demo = body["providers"][0]
     assert demo["mode"] == "stored" and demo["status"] == "unknown"  # never imported yet
     assert replace(DEMO_CONTRACT).ingestion.mode == "live"  # registry contract itself unchanged
+
+
+def test_no_valid_offers_and_volume_drop_are_flagged():
+    empty = assess_provider(SYNTH_CONTRACT, None, [_imp("succeeded", 5, departures=40, offers=0)], NOW)
+    assert empty.status == "degraded" and any("no valid offers" in r for r in empty.reasons)
+    drop = assess_provider(
+        SYNTH_CONTRACT, None, [_imp("succeeded", 5, departures=10), _imp("succeeded", 70)], NOW
+    )
+    assert drop.status == "degraded" and any("dropped from 40 to 10" in r for r in drop.reasons)
+
+
+def test_disabled_providers_are_reported_not_alarmed():
+    h = assess_provider(SYNTH_CONTRACT, None, [], NOW, problems=["authorization expired on 2026-01-01"])
+    assert h.status == "disabled" and h.reasons == ("authorization expired on 2026-01-01",)
+    assert assess_provider(replace(SYNTH_CONTRACT, enabled=False), None, [], NOW).status == "disabled"
+
+
+def test_import_statistics_are_exposed():
+    last = _imp("failed", 2)
+    last.duration_ms, last.rejected_records = 1500, 3
+    h = assess_provider(SYNTH_CONTRACT, None, [last, _imp("succeeded", 20)], NOW)
+    assert h.last_import_duration_ms == 1500 and h.last_rejected_records == 3
+    assert h.last_attempted_import_at == NOW - timedelta(minutes=2) and h.failed_imports_recent == 1
+    assert h.last_departures == 40 and h.last_offers == 50
+
+
+def test_metrics_include_api_search_and_database(app_factory, ops_settings):
+    auth = {"Authorization": f"Bearer {TOKEN}"}
+    params = {"origin": "tashkent", "destination": "samarkand", "date": TOMORROW.isoformat()}
+    with TestClient(app_factory(settings=ops_settings)) as c:
+        c.get("/api/v1/journeys/search", params=params)
+        c.get("/api/v1/journeys/demo~ZZ000.20261112")
+        text = c.get("/metrics", headers=auth).text
+    assert 'tport_http_requests_total{method="GET",route="/api/v1/journeys/search",status="2xx"} 1' in text
+    assert 'route="/api/v1/journeys/{journey_id}",status="4xx"' in text  # template, not the raw id
+    assert "tport_http_request_duration_seconds_bucket" in text and "tport_database_up 1" in text
+    assert 'tport_searches_total{outcome="results"} 1' in text
+    assert 'tport_journeys_shown_total{freshness="fresh",price_type="demo"}' in text
+
+
+def test_rate_limits_are_counted(app_factory, ops_settings):
+    limited = ops_settings.model_copy(update={"rate_limit_per_minute": 1})
+    with TestClient(app_factory(settings=limited)) as c:
+        c.get("/api/v1/locations")
+        assert c.get("/api/v1/locations").status_code == 429
+        text = c.get("/metrics", headers={"Authorization": f"Bearer {TOKEN}"}).text
+    assert 'tport_rate_limited_total{scope="api"} 1' in text
+
+
+def test_json_logs_contain_no_extra_fields(capsys):
+    import json
+    import logging
+
+    from app.core.metrics import JsonFormatter
+
+    record = logging.LogRecord("tport", logging.INFO, __file__, 1, "GET %s %s", ("/api/v1/me", 401), None)
+    line = json.loads(JsonFormatter().format(record))
+    assert line["msg"] == "GET /api/v1/me 401" and set(line) == {"ts", "level", "logger", "msg"}
+
+
+def test_scheduler_runs_due_imports_and_backs_off(db_factory, catalog, clock):
+    from app.core.clock import FixedClock
+    from app.main import seed_reference
+    from app.providers.feed import FeedAdapter
+    from app.services.scheduler import Scheduler, is_due
+    from tests.conftest import SYNTH_INFO, synth_feed
+
+    seed_reference(db_factory)
+    with db_factory() as db:
+        db.add(
+            m.Provider(
+                id="synthrail",
+                name="x",
+                is_demo=False,
+                attribution="t",
+                booking_hosts=[],
+                access_basis="TEST",
+            )
+        )
+        db.commit()
+    factories = {"synthrail": lambda: FeedAdapter(SYNTH_INFO, synth_feed(), catalog, clock)}
+    sched = Scheduler([SYNTH_CONTRACT], factories, db_factory, clock, catalog)
+    first = sched.tick()
+    assert first["imports"][0]["outcome"] == "succeeded" and first["housekeeping"] is not None
+    assert sched.tick()["imports"][0]["outcome"] == "not_due"  # interval is 60 minutes
+    later = Scheduler(
+        [SYNTH_CONTRACT], factories, db_factory, FixedClock(NOW + timedelta(minutes=61)), catalog
+    )
+    assert later.tick()["imports"][0]["outcome"] == "succeeded"
+    # After a failure the provider is retried only after another interval (no hammering).
+    assert not is_due(SYNTH_CONTRACT, [_imp("failed", 10)], NOW)
+    assert is_due(SYNTH_CONTRACT, [_imp("failed", 61)], NOW)

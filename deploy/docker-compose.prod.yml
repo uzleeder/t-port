@@ -1,25 +1,46 @@
-# Example single-host production stack: Caddy (HTTPS) -> web (Next.js) -> api (FastAPI).
+# Single-host stack: Caddy (HTTPS) -> web (Next.js) -> api (FastAPI) + scheduler.
 # PostgreSQL is a MANAGED service (not in this file). Only ports 80/443 are published.
-#   cp .env.example .env.production   # fill in real values; never commit it
+#
+# Production:
+#   cp .env.example .env.production          # fill in real values; never commit it
 #   docker compose -f deploy/docker-compose.prod.yml --env-file .env.production up -d --build
+#
+# Staging (separate project, env file, database, domain and access-restricted proxy):
+#   TPORT_ENV_FILE=../.env.staging CADDYFILE=./Caddyfile.staging TPORT_SUBNET=172.31.0.0/24 \
+#   docker compose -p tport-staging -f deploy/docker-compose.prod.yml --env-file .env.staging up -d --build
 name: tport-prod
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "5" }
 
 services:
   api:
     build: ../backend
-    env_file: ../.env.production
+    env_file: ${TPORT_ENV_FILE:-../.env.production}
     environment:
-      TPORT_ENVIRONMENT: production
+      TPORT_ENVIRONMENT: production  # staging too: same safety checks as production
       # Caddy overwrites X-Forwarded-For and Next.js passes it through; trust it only from
       # the private network this stack runs on.
-      FORWARDED_ALLOW_IPS: "172.30.0.0/24"
+      FORWARDED_ALLOW_IPS: ${TPORT_SUBNET:-172.30.0.0/24}
       WEB_CONCURRENCY: "2"
     restart: unless-stopped
     networks: [internal]
     expose: ["8000"]
-    logging: &logging
-      driver: json-file
-      options: { max-size: "10m", max-file: "5" }
+    logging: *logging
+
+  # Due provider imports (per contract interval, lock-protected) and daily housekeeping.
+  scheduler:
+    build: ../backend
+    env_file: ${TPORT_ENV_FILE:-../.env.production}
+    environment:
+      TPORT_ENVIRONMENT: production
+      TPORT_SKIP_MIGRATIONS: "1"  # the api container applies migrations
+    command: ["python", "-m", "app.cli", "scheduler", "--interval", "60"]
+    restart: unless-stopped
+    depends_on: [api]
+    networks: [internal]
+    logging: *logging
 
   web:
     build:
@@ -38,7 +59,7 @@ services:
     depends_on: [web]
     ports: ["80:80", "443:443"]
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${CADDYFILE:-./Caddyfile}:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     networks: [internal]
@@ -48,7 +69,7 @@ networks:
   internal:
     ipam:
       config:
-        - subnet: 172.30.0.0/24
+        - subnet: ${TPORT_SUBNET:-172.30.0.0/24}
 
 volumes:
   caddy_data:

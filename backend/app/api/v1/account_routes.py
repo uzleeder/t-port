@@ -4,31 +4,39 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DbSession
 
 from app.api.deps import Principal, get_db, require_csrf, require_principal
 from app.api.v1.routes import get_search
 from app.api.v1.schemas import JourneyOut, Page
-from app.core.errors import NotFound, ValidationFailed
+from app.core.errors import NotFound, RateLimited, ValidationFailed
 from app.db import models as m
 from app.db.repositories import (
     ActivityRepository,
+    PreferencesRepository,
     SavedJourneyRepository,
     SessionRepository,
     UserRepository,
 )
 from app.db.session import transaction
-from app.services.auth import AuthService, Conflict, IssuedSession
-from app.services.search import SearchService
+from app.domain.models import TransportMode
+from app.services.auth import AuthService, Conflict, IssuedSession, Unauthorized
+from app.services.ratelimit import limiter_key
+from app.services.search import SearchService, SortKey
 
 router = APIRouter(prefix="/api/v1")
+
+
+class TooManyAttempts(RateLimited):
+    """Per-account failed-login throttle (HTTP 429)."""
 
 
 # --- schemas -------------------------------------------------------------------------------
@@ -141,7 +149,21 @@ def login(
 ) -> AuthResponse:
     auth: AuthService = request.app.state.auth
     now = request.app.state.clock.now()
-    user = auth.authenticate(db, body.email.strip().lower(), body.password, now)
+    settings = request.app.state.settings
+    limiter = request.app.state.limiter
+    email = body.email.strip().lower()
+    # Per-account throttle (applies to unknown emails too, so it reveals nothing about accounts).
+    fail_key = limiter_key("login-fail", email)
+    window = settings.login_failure_window_seconds
+    if limiter.peek(fail_key, window, now) >= settings.login_failure_limit:
+        raise TooManyAttempts(
+            f"Too many failed sign-in attempts for this account. Try again in {window // 60} minutes."
+        )
+    try:
+        user = auth.authenticate(db, email, body.password, now)
+    except Unauthorized:
+        limiter.hit(fail_key, window, now)
+        raise
     # Rotate: any session cookie presented before login is not reused.
     old = request.cookies.get(request.app.state.settings.session_cookie_name)
     if old and (prev := auth.resolve(db, old, now)):
@@ -206,6 +228,75 @@ def me(
         ],
         session_expires_at=principal.session.expires_at,
     )
+
+
+# --- preferences -------------------------------------------------------------------------------
+class PreferencesIn(BaseModel):
+    """Search defaults. Enumerated values only, so nothing personal can be stored here."""
+
+    model_config = ConfigDict(extra="forbid")
+    modes: list[TransportMode] = Field(default_factory=list, max_length=4, description="Empty = all modes.")
+    prefer_modes: list[TransportMode] = Field(default_factory=list, max_length=4)
+    sort: SortKey = SortKey.RECOMMENDED
+    max_transfers: int = Field(default=1, ge=0, le=2)
+    max_price: Decimal | None = Field(default=None, gt=0, le=Decimal("100000000"), decimal_places=2)
+
+    @field_validator("modes", "prefer_modes")
+    @classmethod
+    def _dedupe(cls, v: list[TransportMode]) -> list[TransportMode]:
+        unique = sorted(set(v), key=lambda m: m.value)
+        return [] if len(unique) == len(TransportMode) else unique
+
+
+class PreferencesOut(PreferencesIn):
+    model_config = ConfigDict(extra="ignore")
+    updated_at: datetime | None = None
+
+
+def _prefs_out(row: m.UserPreferences | None) -> PreferencesOut:
+    if row is None:
+        return PreferencesOut()
+    return PreferencesOut(
+        modes=[TransportMode(x) for x in row.modes or []],
+        prefer_modes=[TransportMode(x) for x in row.prefer_modes or []],
+        sort=SortKey(row.sort),
+        max_transfers=row.max_transfers,
+        max_price=row.max_price,
+        updated_at=row.updated_at,
+    )
+
+
+@router.get("/me/preferences", response_model=PreferencesOut, tags=["account"])
+def get_preferences(
+    principal: Annotated[Principal, Depends(require_principal)], db: Annotated[DbSession, Depends(get_db)]
+) -> PreferencesOut:
+    """The signed-in user's search defaults (built-in defaults until they save some)."""
+    return _prefs_out(PreferencesRepository(db).get(principal.user.id))
+
+
+@router.put("/me/preferences", response_model=PreferencesOut, tags=["account"])
+def put_preferences(
+    body: PreferencesIn,
+    request: Request,
+    principal: Annotated[Principal, Depends(require_csrf)],
+    db: Annotated[DbSession, Depends(get_db)],
+) -> PreferencesOut:
+    if body.modes and body.prefer_modes and not set(body.prefer_modes) <= set(body.modes):
+        raise ValidationFailed(
+            "Preferred modes must be among the modes you search.",
+            details=[{"field": "prefer_modes", "message": "Not within 'modes'."}],
+        )
+    row = PreferencesRepository(db).put(
+        principal.user.id,
+        request.app.state.clock.now(),
+        modes=[x.value for x in body.modes],
+        prefer_modes=[x.value for x in body.prefer_modes],
+        sort=body.sort.value,
+        max_transfers=body.max_transfers,
+        max_price=body.max_price,
+    )
+    db.commit()
+    return _prefs_out(row)
 
 
 # --- saved journeys --------------------------------------------------------------------------

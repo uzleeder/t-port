@@ -22,6 +22,11 @@ from app.services.catalog import LocationCatalog
 from app.services.freshness import FreshnessPolicy
 
 AuthorizationBasis = Literal["internal_synthetic", "licence", "written_agreement", "open_data_terms"]
+AccessMethod = Literal[
+    "synthetic", "rest_api", "gtfs_static", "gtfs_realtime", "licensed_file", "provider_export"
+]
+Operation = Literal["locations", "schedules", "offers", "availability", "booking_links"]
+FreshnessBasis = Literal["retrieved_at", "source_updated_at"]
 _RECORD_ID = re.compile(r"^[A-Za-z0-9._-]{1,48}$")
 _CURRENCY = re.compile(r"^[A-Z]{3}$")
 
@@ -41,11 +46,41 @@ class Authorization:
 
 
 @dataclass(frozen=True, slots=True)
+class Onboarding:
+    """The documented provider record required before a real source may be enabled."""
+
+    official_identity: str  # legal name / registration of the data owner
+    access_method: AccessMethod
+    allowed_usage: str
+    redistribution_restrictions: str
+    commercial_use_restrictions: str
+    rate_limit_terms: str
+    refresh_expectations: str
+    contact_escalation: str  # role-based contact, not a personal phone number in code
+    technical_docs: str
+    test_environment: str | None = None  # URL or "none"
+
+    def missing(self) -> list[str]:
+        required = {
+            "official_identity": self.official_identity,
+            "allowed_usage": self.allowed_usage,
+            "redistribution_restrictions": self.redistribution_restrictions,
+            "commercial_use_restrictions": self.commercial_use_restrictions,
+            "rate_limit_terms": self.rate_limit_terms,
+            "refresh_expectations": self.refresh_expectations,
+            "contact_escalation": self.contact_escalation,
+            "technical_docs": self.technical_docs,
+        }
+        return [k for k, v in required.items() if not v.strip()]
+
+
+@dataclass(frozen=True, slots=True)
 class Capabilities:
     modes: frozenset[TransportMode]
     live_prices: bool  # prices reflect current availability (not a published tariff)
     seat_availability: bool
     on_demand: bool = False  # may return on-demand services (e.g. taxi) without fixed times
+    operations: frozenset[Operation] = frozenset({"locations", "schedules", "offers"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +92,11 @@ class IngestionPolicy:
     offer_batch_size: int = 200
     lock_ttl_seconds: int = 15 * 60  # an import holding the lock longer is presumed dead
     update_interval_minutes: int | None = None  # expected schedule of stored imports
+    requests_per_minute: int | None = None  # provider rate limit (None = only concurrency bound)
+    request_timeout_seconds: float = 10.0
+    import_timeout_seconds: int = 15 * 60  # whole-import deadline; exceeded => FAILED
+    jitter: float = 0.25  # +/- fraction applied to each backoff delay
+    max_rejected_ratio: float = 0.0  # share of invalid records quarantined before rejecting the import
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,10 +112,24 @@ class ProviderContract:
     data_mapping: str = ""  # how source stations/times/currency map to T-Port
     reliability_notes: str = ""
     update_frequency: str | None = None
+    onboarding: Onboarding | None = None  # required for real providers
+    # Prices often age faster than timetables. None = same as the timetable policy.
+    price_stale_after: timedelta | None = None
+    price_expire_after: timedelta | None = None
+    freshness_basis: FreshnessBasis = "retrieved_at"
+    booking_requires_fresh_price: bool = True
+    enabled: bool = True  # operational switch: False => DISABLED without touching the paperwork
 
     @property
     def freshness(self) -> FreshnessPolicy:
+        """Timetable freshness policy."""
         return FreshnessPolicy(self.stale_after, self.expire_after)
+
+    @property
+    def price_freshness(self) -> FreshnessPolicy:
+        return FreshnessPolicy(
+            self.price_stale_after or self.stale_after, self.price_expire_after or self.expire_after
+        )
 
     @property
     def access_basis(self) -> str:
@@ -109,14 +163,26 @@ def contract_problems(c: ProviderContract, today: date) -> list[str]:
             problems.append("source does not permit showing prices; T-Port cannot list its fares")
         if not c.data_mapping.strip():
             problems.append("data mapping is undocumented")
+        if c.onboarding is None:
+            problems.append("onboarding record is missing")
+        else:
+            problems += [f"onboarding record lacks {k}" for k in c.onboarding.missing()]
+            if c.onboarding.access_method == "synthetic":
+                problems.append("real providers cannot use the synthetic access method")
     if c.info.booking_hosts and not a.permits_booking_redirects:
         problems.append("booking hosts configured but redirects are not permitted")
     if a.permits_booking_redirects and not c.info.booking_hosts:
         problems.append("booking redirects permitted but no allowed hosts listed")
     if not c.capabilities.modes:
         problems.append("no transport modes declared")
+    if not c.enabled:
+        problems.append("provider is disabled by its contract")
     if c.expire_after < c.stale_after:
         problems.append("expire_after must be >= stale_after")
+    if (c.price_expire_after or c.expire_after) < (c.price_stale_after or c.stale_after):
+        problems.append("price_expire_after must be >= price_stale_after")
+    if c.authorization.permits_booking_redirects and "booking_links" not in c.capabilities.operations:
+        problems.append("booking redirects permitted but 'booking_links' is not a declared operation")
     if not _CURRENCY.match(c.currency):
         problems.append("currency must be an ISO 4217 code")
     try:
@@ -130,6 +196,14 @@ def contract_problems(c: ProviderContract, today: date) -> list[str]:
         problems.append("max_attempts must be 1-10")
     if ing.mode == "stored" and not ing.update_interval_minutes:
         problems.append("stored providers must declare update_interval_minutes")
+    if ing.requests_per_minute is not None and ing.requests_per_minute < 1:
+        problems.append("requests_per_minute must be >= 1")
+    if not 0 < ing.request_timeout_seconds <= 120:
+        problems.append("request_timeout_seconds must be within (0, 120]")
+    if not 0 <= ing.jitter < 1:
+        problems.append("jitter must be within [0, 1)")
+    if not 0 <= ing.max_rejected_ratio <= 0.2:
+        problems.append("max_rejected_ratio must be within [0, 0.2]")
     return problems
 
 
@@ -278,3 +352,31 @@ async def check_conformance(
             ):
                 report.violations.append(Violation("lookup_mismatch", d.id, "get_departure() disagrees"))
     return report
+
+
+@dataclass(slots=True)
+class Partition:
+    """Result of quarantining invalid records: what may be published, and what was held back."""
+
+    departures: list[Departure]
+    offers: list[Offer]
+    rejected_departures: int
+    rejected_offers: int
+
+    @property
+    def rejected(self) -> int:
+        return self.rejected_departures + self.rejected_offers
+
+
+def partition_valid(
+    departures: Sequence[Departure], offers: Sequence[Offer], violations: Sequence[Violation]
+) -> Partition:
+    """Drop every record named by a violation (and the fares of dropped departures).
+
+    Duplicate departure ids are dropped entirely: there is no safe way to choose between them.
+    """
+    bad = {v.subject for v in violations}
+    keep_deps = [d for d in departures if d.id not in bad]
+    kept_ids = {d.id for d in keep_deps}
+    keep_offers = [o for o in offers if o.id not in bad and o.departure_id in kept_ids]
+    return Partition(keep_deps, keep_offers, len(departures) - len(keep_deps), len(offers) - len(keep_offers))

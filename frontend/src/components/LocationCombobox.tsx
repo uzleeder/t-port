@@ -117,7 +117,7 @@ export function LocationCombobox({ label, name, value, onChange, placeholder }: 
         >
           {error && <li className="px-3 py-2 text-sm text-danger">{error}</li>}
           {!error && items.length === 0 && (
-            <li className="px-3 py-2 text-sm text-muted">No matching city in the current dataset.</li>
+            <li className="px-3 py-2 text-sm text-muted">No matching location.</li>
           )}
           {items.map((loc, i) => (
             <li
@@ -130,7 +130,9 @@ export function LocationCombobox({ label, name, value, onChange, placeholder }: 
               className={`cursor-pointer px-3 py-2 ${i === active ? "bg-blue/20" : ""}`}
             >
               <span className="font-medium">{loc.name}</span>
-              <span className="ml-2 text-xs text-muted">{loc.region}</span>
+              {loc.region !== loc.name && (
+                <span className="ml-2 text-xs text-muted">{loc.region}</span>
+              )}
             </li>
           ))}
         </ul>

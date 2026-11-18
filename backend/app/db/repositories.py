@@ -37,8 +37,8 @@ class ReferenceRepository:
             row = self.db.get(m.LocationRow, loc.id) or m.LocationRow(id=loc.id)
             row.name, row.country_code, row.region = loc.name, loc.country_code, loc.region
             row.timezone = loc.timezone
-            row.latitude = Decimal(str(loc.latitude))
-            row.longitude = Decimal(str(loc.longitude))
+            row.latitude = Decimal(str(loc.latitude)) if loc.latitude is not None else None
+            row.longitude = Decimal(str(loc.longitude)) if loc.longitude is not None else None
             row.aliases = list(loc.aliases)
             self.db.add(row)
         self.db.flush()
@@ -64,8 +64,8 @@ class ReferenceRepository:
                 r.country_code,
                 r.region,
                 r.timezone,
-                float(r.latitude),
-                float(r.longitude),
+                float(r.latitude) if r.latitude is not None else None,
+                float(r.longitude) if r.longitude is not None else None,
                 tuple(r.aliases or ()),
             )
             for r in self.db.scalars(select(m.LocationRow).order_by(m.LocationRow.name))
@@ -97,6 +97,7 @@ class UserRepository:
     def delete(self, user: m.User) -> None:
         """Removes the account, its sessions and saved journeys. Activity rows keep no user link."""
         self.db.execute(delete(m.SavedJourney).where(m.SavedJourney.user_id == user.id))
+        self.db.execute(delete(m.UserPreferences).where(m.UserPreferences.user_id == user.id))
         self.db.execute(delete(m.Session).where(m.Session.user_id == user.id))
         self.db.execute(
             update(m.JourneySearch).where(m.JourneySearch.user_id == user.id).values(user_id=None)
@@ -240,14 +241,43 @@ class TimetableRepository:
         error: str | None = None,
         retries: int = 0,
         rejected_records: int = 0,
+        status: str | None = None,
+        diagnostics: list[dict] | None = None,
     ) -> None:
         imp.finished_at = now
-        imp.status = "failed" if error else "succeeded"
+        imp.status = status or ("failed" if error else "succeeded")
         imp.departures_count, imp.offers_count = departures, offers
         imp.source_updated_at = source_updated_at
         imp.error_message = error[:2000] if error else None
         imp.retries, imp.rejected_records = retries, rejected_records
+        imp.diagnostics = diagnostics[:50] if diagnostics else None
+        if imp.started_at:
+            imp.duration_ms = int((now - imp.started_at).total_seconds() * 1000)
         self.db.flush()
+
+    def set_status(self, import_id: uuid.UUID, status: str) -> None:
+        self.db.execute(update(m.DataImport).where(m.DataImport.id == import_id).values(status=status))
+
+    def update_progress(self, import_id: uuid.UUID, done: int, total: int) -> bool:
+        """Record progress; returns True if cancellation was requested."""
+        self.db.execute(
+            update(m.DataImport)
+            .where(m.DataImport.id == import_id)
+            .values(requests_done=done, requests_total=total)
+        )
+        return bool(self.db.scalar(select(m.DataImport.cancel_requested).where(m.DataImport.id == import_id)))
+
+    def request_cancel(self, provider_id: str) -> int:
+        """Ask every unfinished import of a provider to stop at its next checkpoint."""
+        result = self.db.execute(
+            update(m.DataImport)
+            .where(
+                m.DataImport.provider_id == provider_id,
+                m.DataImport.status.in_(["pending", "running", "validating"]),
+            )
+            .values(cancel_requested=True)
+        )
+        return result.rowcount or 0
 
     def recent_imports(self, provider_id: str, limit: int = 20) -> list[m.DataImport]:
         return list(
@@ -422,3 +452,50 @@ def _to_departure(r: m.DepartureRow) -> Departure:
         retrieved_at=r.retrieved_at,
         source_updated_at=r.source_updated_at,
     )
+
+
+# --- preferences and booking hand-offs ----------------------------------------------------
+class PreferencesRepository:
+    def __init__(self, db: Session) -> None:
+        self.db = db
+
+    def get(self, user_id: uuid.UUID) -> m.UserPreferences | None:
+        return self.db.get(m.UserPreferences, user_id)
+
+    def put(self, user_id: uuid.UUID, now: datetime, **values: Any) -> m.UserPreferences:
+        row = self.db.get(m.UserPreferences, user_id)
+        if row is None:
+            row = m.UserPreferences(user_id=user_id)
+            self.db.add(row)
+        for key, value in values.items():
+            setattr(row, key, value)
+        row.updated_at = now
+        self.db.flush()
+        return row
+
+
+class BookingRedirectRepository:
+    def __init__(self, db: Session) -> None:
+        self.db = db
+
+    def increment(self, provider_id: str, day: date) -> None:
+        """Atomic upsert (safe under concurrent redirects on PostgreSQL and SQLite)."""
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        dialect = self.db.bind.dialect.name if self.db.bind else "postgresql"
+        insert = sqlite_insert if dialect == "sqlite" else pg_insert
+        table = m.BookingRedirectCount.__table__
+        stmt = insert(table).values(provider_id=provider_id, day=day, count=1)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["provider_id", "day"], set_={"count": table.c.count + 1}
+        )
+        self.db.execute(stmt)
+
+    def totals(self, since: date) -> dict[str, int]:
+        rows = self.db.execute(
+            select(m.BookingRedirectCount.provider_id, func.sum(m.BookingRedirectCount.count))
+            .where(m.BookingRedirectCount.day >= since)
+            .group_by(m.BookingRedirectCount.provider_id)
+        ).all()
+        return {provider: int(total) for provider, total in rows}

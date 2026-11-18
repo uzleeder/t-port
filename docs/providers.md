@@ -11,6 +11,9 @@ agreements with any transport operator, aggregator or ticketing platform. All op
 demo data ("Demo Rail Express", "Demo Air", …) are fictional. The `synthrail` provider used in tests
 (`backend/tests/fixtures/synthetic_rail_feed.json`) is also fictional and is never registered.
 
+Integration status, blockers and owners: [provider-integration-status.md](provider-integration-status.md).
+For a query-API provider, start from the REST adapter template in `backend/app/providers/template/`.
+
 ## How a source is described: `ProviderContract`
 
 Every provider is declared in `backend/app/providers/registry.py` as a `ProviderContract`
@@ -66,6 +69,41 @@ departures, and booking URLs only on permitted HTTPS hosts.
   snapshot stays live) and the count is stored in `data_imports.rejected_records`.
 - `check_conformance()` exercises an adapter through the real interface, including round-tripping
   `get_departure()`. Run it with `python -m app.cli check-provider demo`; CI runs it on every push.
+
+## Provider record (required before enabling a real source)
+
+Every item below must be filled in the provider's `Onboarding` record (`contract.onboarding`) or the
+named contract field. `contract_problems` refuses to start a real provider with any of them missing.
+
+| # | Item | Where it is recorded |
+|---|---|---|
+| 1 | Official provider identity | `onboarding.official_identity` |
+| 2 | Data access method (`rest_api`, `gtfs_static`, `gtfs_realtime`, `licensed_file`, `provider_export`) | `onboarding.access_method` |
+| 3 | Authorization or licence basis | `authorization.basis`, `.reference`, `.verified_by`, `.verified_on`, `.expires_on` |
+| 4 | Allowed data usage | `onboarding.allowed_usage` |
+| 5 | Redistribution restrictions | `onboarding.redistribution_restrictions` |
+| 6 | Commercial-use restrictions | `onboarding.commercial_use_restrictions` |
+| 7 | Rate limits | `onboarding.rate_limit_terms` + enforced `ingestion.requests_per_minute`, `max_concurrency` |
+| 8 | Attribution requirements | `authorization.attribution` (shown with every leg) |
+| 9 | Data refresh expectations | `onboarding.refresh_expectations` + `ingestion.update_interval_minutes`, freshness policies |
+| 10 | Booking redirect permissions | `authorization.permits_booking_redirects`, `info.booking_hosts`, `capabilities.operations` |
+| 11 | Contact and escalation procedure | `onboarding.contact_escalation` (role-based, not personal numbers) |
+| 12 | Technical documentation reference | `onboarding.technical_docs` |
+| 13 | Supported locations | adapter `supported_location_ids()` / `served_routes()` |
+| 14 | Supported transport modes | `capabilities.modes` |
+| 15 | Test environment availability | `onboarding.test_environment` |
+
+Also required: `capabilities.live_prices` (only live prices can show as "confirmed"), separate
+`price_stale_after`/`price_expire_after` when prices age faster than timetables, `freshness_basis`, and
+`max_rejected_ratio` (share of invalid records that may be quarantined before an import is rejected).
+Set `enabled=False` to switch a provider off without touching its paperwork.
+
+**Source types.** File-based sources (licensed timetables, provider exports, GTFS static converted to the
+feed format) use `FeedAdapter`. API sources (REST, GTFS-Realtime) need a new adapter class that makes
+every request through `core.outbound.guarded_client(contract hosts)`. That client allows HTTPS only, to the
+contract's hosts only, never internal addresses, and follows no redirects.
+
+No unverified provider may be described as "integrated" anywhere: in the product, docs or sales material.
 
 ## Onboarding a real provider
 

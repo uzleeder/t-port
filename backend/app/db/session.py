@@ -18,7 +18,14 @@ def make_engine(url: str, *, echo: bool = False) -> Engine:
 
             kwargs["poolclass"] = StaticPool
     else:
-        kwargs.update(pool_pre_ping=True, pool_size=5, max_overflow=10)
+        # Fail fast when the database is unreachable instead of hanging requests for minutes.
+        kwargs.update(
+            pool_pre_ping=True,
+            pool_size=5,
+            max_overflow=10,
+            pool_timeout=10,
+            connect_args={"connect_timeout": 5},
+        )
     engine = create_engine(url, **kwargs)
     if url.startswith("sqlite"):
 

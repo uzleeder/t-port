@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { DemoBadge } from "./Badges";
+import { CompareToggle, CompareTray } from "./Compare";
 import { StateMessage } from "./Notices";
+import { PreferencesForm } from "./PreferencesForm";
 import { ApiError, clientApi } from "@/lib/api";
-import { formatDateLong, formatDuration, formatPriceRange, formatTimestamp, localTime } from "@/lib/format";
+import { formatDateLong, formatDuration, formatPriceRange, formatTimestamp, localTime, timeAgo } from "@/lib/format";
 import { notifySessionChanged, useMe } from "@/lib/session";
 import type { Journey, Page } from "@/lib/types";
 
@@ -23,6 +25,7 @@ interface Saved {
 }
 
 const PAGE = 10;
+const SNAPSHOT_STALE_MS = 60 * 60 * 1000; // older snapshots get a "may have changed" notice
 
 export function Dashboard() {
   const [me] = useMe();
@@ -31,10 +34,14 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [today, setToday] = useState<string>("");
+  const [nowMs, setNowMs] = useState<number | undefined>(undefined);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- client clock, read once after mount
-    setToday(new Date(Date.now() + 5 * 3_600_000).toISOString().slice(0, 10));
+    const now = Date.now();
+    /* eslint-disable react-hooks/set-state-in-effect -- client clock, read once after mount */
+    setToday(new Date(now + 5 * 3_600_000).toISOString().slice(0, 10));
+    setNowMs(now);
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, []);
 
   const [reloadKey, setReloadKey] = useState(0);
@@ -112,6 +119,8 @@ export function Dashboard() {
           {saved?.items.map((s) => {
             const j = s.snapshot;
             const past = !!(s.travel_date && today && s.travel_date < today);
+            const age = nowMs === undefined ? 0 : nowMs - new Date(s.snapshot_taken_at).getTime();
+            const oldSnapshot = !past && age > SNAPSHOT_STALE_MS;
             return (
               <li key={s.id} className="rounded-2xl border border-line bg-surface p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -130,9 +139,18 @@ export function Dashboard() {
                       {formatPriceRange(j.price, j.price_max, j.currency)} when saved on{" "}
                       {formatTimestamp(s.snapshot_taken_at)}
                     </p>
+                    {oldSnapshot && (
+                      <p className="mt-1 text-xs text-gold">
+                        Saved {timeAgo(s.snapshot_taken_at, nowMs)}: prices and times may have changed. Open it to
+                        see current data.
+                      </p>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     {j.is_demo && <DemoBadge />}
+                    {!past && (
+                      <CompareToggle id={s.journey_id} label={`${j.origin_name} to ${j.destination_name}`} />
+                    )}
                     {!past && (
                       <Link href={`/journeys/${encodeURIComponent(s.journey_id)}`}
                         className="rounded-lg border border-line px-3 py-1.5 text-sm hover:border-blue">
@@ -174,6 +192,16 @@ export function Dashboard() {
               className="rounded-lg border border-line px-3 py-2 disabled:opacity-40">Next</button>
           </nav>
         )}
+      </section>
+
+      <CompareTray />
+
+      <section aria-labelledby="prefs-h">
+        <h2 id="prefs-h" className="text-xl font-semibold">Search preferences</h2>
+        <p className="mt-1 text-sm text-muted">
+          New searches start with these settings. You can still change them on each search.
+        </p>
+        <PreferencesForm />
       </section>
 
       <section aria-labelledby="recent-h">

@@ -6,6 +6,8 @@ non-production environments (both are disabled in production).
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | GET | `/health` | none | `200` when the database is reachable, `503` otherwise |
+| GET | `/health/providers` | ops token | provider states and import statistics (404 without the token) |
+| GET | `/metrics` | ops token | Prometheus text (404 without the token) |
 | GET | `/api/v1/locations?q=&limit=&offset=` | none | Alias-aware city search, paginated |
 | GET | `/api/v1/locations/{id}` | none | City with its stations |
 | GET | `/api/v1/journeys/search` | optional | See parameters below |
@@ -18,6 +20,11 @@ non-production environments (both are disabled in production).
 | GET | `/api/v1/saved?limit=&offset=` | session | Newest first |
 | POST | `/api/v1/saved` | session + CSRF | `{journey_id, note?}`; only currently valid journeys |
 | DELETE | `/api/v1/saved/{id}` | session + CSRF | `404` for other users' items |
+| GET | `/api/v1/me/preferences` | session | Search defaults (built-in defaults until saved) |
+| PUT | `/api/v1/me/preferences` | session + CSRF | `{modes, prefer_modes, sort, max_transfers, max_price}`; enumerated values only |
+| GET | `/api/v1/journeys/{id}/booking` | public | Explains the external booking: provider, host, price, price type and age, or why not bookable |
+| GET | `/api/v1/journeys/{id}/book` | public | `303` to the operator's booking page after re-validation; `409 booking_unavailable` otherwise |
+| GET | `/api/v1/journeys/compare?ids=a,b[,c,d]` | public | 2–4 journey IDs; each is re-resolved from current data |
 | POST | `/api/v1/ai/interpret` | optional | `{text}` (≤500 chars) |
 
 ## Journey search parameters
@@ -27,10 +34,12 @@ non-production environments (both are disabled in production).
 | `origin`, `destination` | location ID | required | e.g. `tashkent`, `samarkand` (from `/locations`) |
 | `date` | `YYYY-MM-DD` | required | Local date at the origin |
 | `modes` | `train,bus,flight,taxi` | all | Comma list |
-| `sort` | `recommended \| price \| duration \| departure` | `recommended` | |
+| `sort` | `recommended \| price \| duration \| departure \| transfers` | `recommended` | `transfers` = fewest changes, then fastest, then cheapest |
 | `max_price` | decimal | none | Same currency as results (UZS) |
 | `depart_after`, `depart_before` | `HH:MM` | none | Local departure window; on-demand services always match |
-| `max_transfers` | `0 \| 1` | `1` | `0` = direct journeys only |
+| `max_transfers` | `0 \| 1 \| 2` | `1` | `0` = direct journeys only (Phase 3: up to 2) |
+| `arrive_before` | `HH:MM` | none | Local time at the destination on the travel date; journeys without a fixed arrival time are excluded |
+| `prefer_modes` | `train,bus,flight,taxi` | none | Ranking preference for `recommended` only; never filters |
 | `page`, `page_size` | int | 1, 20 | `page_size` ≤ 50 |
 
 The response contains `items`, `total`, `page`, `summary` (cheapest, fastest and earliest IDs, price
@@ -60,4 +69,65 @@ Every error has the same shape:
 ## Rate limits (per client IP, per minute)
 
 All `/api/*` requests: 120. Unsafe requests to `/api/v1/auth/*`: 10. `/api/v1/ai/*`: 20. All are
-configurable. The limiter is in-memory, so each API process counts separately.
+configurable. The auth and AI limits are shared by all API workers (PostgreSQL); the general limit is
+counted per process. Failed logins are additionally limited per account (5 per 15 minutes).
+
+## Reliability fields (added in Phase 2, backward compatible)
+Each journey keeps `freshness` and `booking_url`, and adds:
+- `price_type`: `confirmed` (a fresh live price), `indicative`, `estimated` or `demo`; for a connection,
+  the least certain of its legs
+- `booking_note`: why there is no booking link, when there isn't one
+
+Each leg adds `timetable_freshness`, `price_freshness` (`fresh|stale|unknown|expired`), `price_type`
+and `provider` (`id`, `name`, `is_demo`, `attribution`). `freshness` may now also be `unknown`.
+
+Development and test only: with `TPORT_ENABLE_FAULT_SIMULATION=true` (refused in production), search
+accepts `simulate=stale` and/or `simulate=outage` to exercise stale-data and outage handling.
+
+## AI interpretation (Phase 3)
+
+`POST /api/v1/ai/interpret` returns the validated `intent`, a `search_query` that reproduces the same
+deterministic search on `/journeys/search`, the `results`, and an `explanation` assembled by template
+from those results only. Phase 3 intent fields (all optional, backward compatible):
+
+| Field | Meaning |
+|---|---|
+| `arrive_before`, `depart_after`, `depart_before` | Local `HH:MM`; only explicit clock times ("6 pm", "18:00"), never guessed from "by 6" |
+| `transfer_preference` | `direct` (max 0 changes), `fewest` (sort `transfers`, up to 2) or `any` |
+| `max_transfers` | `0`–`2`; an arrival deadline widens the default to 2 |
+| `prefer_modes` | Soft preference (ranking); `modes` stays the hard filter |
+| `compare_modes` | Explanation adds the best option per mode from the returned results |
+
+Budgets in another currency (`$50`, `1500 rubles`) are not converted: the assistant asks for a UZS
+amount. The LLM (when enabled) receives only the request text, today's date and the location catalogue;
+no provider data is ever sent to it. Metrics: `tport_ai_requests_total{engine,outcome}`,
+`tport_ai_latency_seconds_sum/_count`, `tport_ai_errors_total{code}`, `tport_ai_clarifications_total`,
+`tport_ai_tokens_total{direction,model}` and, only when `TPORT_AI_INPUT_USD_PER_MTOK` and
+`TPORT_AI_OUTPUT_USD_PER_MTOK` are set by the operator, `tport_ai_estimated_cost_usd_total{model}`.
+
+## Journey comparison (Phase 3)
+
+`GET /api/v1/journeys/compare?ids=` takes 2–4 distinct journey IDs (direct or multi-leg) and returns
+`items` (each `available`, with the current `journey`, or a `reason` such as "already left"),
+`best` (IDs per criterion: `cheapest`, `fastest`, `fewest_transfers`, `earliest_departure`,
+`earliest_arrival`; ties list every ID; a criterion needs at least two comparable journeys) and
+`caveats` (estimated prices compared by lower bound, demo or stale data, different routes, days or
+currencies). Unavailable journeys never count as best. The web app's `/compare?ids=` page renders this
+as a table on wide screens and labelled cards on phones.
+
+## Preferences and booking hand-off (Phase 3)
+
+Preferences are search defaults for new searches started from the search form (modes, preferred
+modes, sort, changes, budget). They never filter the API by themselves and contain no free text.
+Deleting the account deletes them.
+
+`/journeys/{id}/book` re-resolves the journey from current data and re-checks the link: direct
+journeys only (multi-leg journeys list `leg_journey_ids` to book separately), never demo data,
+HTTPS on a host the provider's contract allows, and a fresh price when the contract requires it.
+T-Port adds nothing to the operator URL and sends `Referrer-Policy: no-referrer`. Only an aggregate
+count per provider and day is stored (`booking_redirect_counts`) plus the counter
+`tport_booking_redirects_total{provider}`.
+
+`TPORT_ENABLE_SYNTHETIC_BOOKING=true` registers a fictional TEST provider whose links point at
+`booking.synthrail.test` so the flow can be exercised in development and e2e tests. The settings
+validator refuses it in production.
