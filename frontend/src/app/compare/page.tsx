@@ -169,7 +169,7 @@ async function Comparison({ searchParams }: { searchParams: PageProps<"/compare"
 
       {journeys.some((j) => j.is_demo) && <DemoNotice />}
       {data.caveats.length > 0 && (
-        <ul aria-label="Things to keep in mind" className="space-y-1 rounded-xl border border-gold/50 px-4 py-3 text-sm text-gold">
+        <ul aria-label="Things to keep in mind" className="space-y-1 rounded-2xl bg-amber/15 px-4 py-3 text-sm text-gold">
           {data.caveats.map((c) => (
             <li key={c}>{c}</li>
           ))}
@@ -221,7 +221,7 @@ async function Comparison({ searchParams }: { searchParams: PageProps<"/compare"
                       {row.label}
                     </th>
                     {journeys.map((j) => (
-                      <td key={j.id} className={`px-4 py-3 align-top ${isBest(row, j.id) ? "bg-blue/10" : ""}`}>
+                      <td key={j.id} className={`px-4 py-3 align-top ${isBest(row, j.id) ? "bg-amber/15" : ""}`}>
                         {row.cell(j)}
                         {isBest(row, j.id) && <span className="ml-2 text-xs font-semibold text-success">best</span>}
                       </td>
@@ -247,7 +247,7 @@ async function Comparison({ searchParams }: { searchParams: PageProps<"/compare"
           {/* Phones: one card per journey with the same labelled rows. */}
           <ol className="space-y-4 md:hidden" aria-label="Compared journeys">
             {journeys.map((j, i) => (
-              <li key={j.id} className="rounded-2xl border border-line bg-surface p-4">
+              <li key={j.id} className="rounded-3xl bg-surface shadow-soft p-4">
                 <h2 className="font-semibold">Option {i + 1}</h2>
                 <div className="mt-1 flex flex-wrap gap-1">
                   {winners(j.id).map((w) => (

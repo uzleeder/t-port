@@ -104,7 +104,7 @@ export function LocationCombobox({ label, name, value, onChange, placeholder }: 
           blurTimer.current = setTimeout(() => setOpen(false), 120);
         }}
         onKeyDown={onKeyDown}
-        className="w-full rounded-xl border border-line bg-navy px-3 py-3 text-ink placeholder:text-muted/60 focus:border-blue"
+        className="w-full rounded-xl border border-line bg-card px-3 py-3 text-ink placeholder:text-muted/60 focus:border-blue"
       />
       <input type="hidden" name={name} value={value?.id ?? ""} />
       {open && (
@@ -112,7 +112,7 @@ export function LocationCombobox({ label, name, value, onChange, placeholder }: 
           id={listId}
           role="listbox"
           aria-label={`${label} suggestions`}
-          className="absolute z-20 mt-1 max-h-72 w-full overflow-auto rounded-xl border border-line bg-surface-2 py-1 shadow-xl shadow-black/40"
+          className="absolute z-20 mt-1 max-h-72 w-full overflow-auto rounded-2xl bg-navy/95 py-1 shadow-xl shadow-black/40 ring-1 ring-line backdrop-blur-xl"
           onMouseDown={() => blurTimer.current && clearTimeout(blurTimer.current)}
         >
           {error && <li className="px-3 py-2 text-sm text-danger">{error}</li>}

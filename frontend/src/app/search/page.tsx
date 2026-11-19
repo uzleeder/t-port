@@ -1,19 +1,21 @@
 import type { Metadata } from "next";
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { CompareTray } from "@/components/Compare";
-import { JourneyCard } from "@/components/JourneyCard";
+import { CompareCount, CompareTray } from "@/components/Compare";
+import { Icon } from "@/components/Icons";
+import { PageBanner } from "@/components/PageBanner";
+import { SearchSummary } from "@/components/SearchSummary";
+import { JourneyRow } from "@/components/JourneyRow";
 import { DemoNotice, LabelsHelp, StateMessage } from "@/components/Notices";
 import { RetryButton } from "@/components/RetryButton";
-import { ResultsControls } from "@/components/ResultsControls";
+import { ResultsControls, ResultsTabs } from "@/components/ResultsControls";
 import { SearchForm } from "@/components/SearchForm";
 import { ApiError } from "@/lib/api";
 import { requestTime, serverApi } from "@/lib/server-api";
 import {
   buildSearchQuery,
+  timeAgo,
   formatDateLong,
-  formatDuration,
-  formatMoney,
   formatTimestamp,
   parseSearchParams,
   type SearchParams,
@@ -24,7 +26,7 @@ export const metadata: Metadata = { title: "Search journeys" };
 
 export default function SearchPage({ searchParams }: PageProps<"/search">) {
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+    <div className="mx-auto max-w-[80rem] space-y-5 px-3 py-4 sm:px-6 lg:px-0 lg:py-0">
       <Suspense fallback={<ResultsSkeleton />}>
         <Results searchParams={searchParams} />
       </Suspense>
@@ -64,14 +66,26 @@ async function Results({ searchParams }: { searchParams: PageProps<"/search">["s
 
   return (
     <div className="space-y-6">
-      <SearchForm
-        compact
-        key={buildSearchQuery(params)}
-        initialOrigin={origin}
-        initialDestination={destination}
-        initialDate={params.date}
-        initialModes={params.modes}
+      <PageBanner
+        title="Search"
+        accent="Results"
+        subtitleAs="h2"
+        subtitle={`Compare travel options from ${origin?.name ?? params.origin} to ${destination?.name ?? params.destination}`}
       />
+      <SearchSummary
+        from={origin?.name ?? params.origin}
+        to={destination?.name ?? params.destination}
+        date={formatDateLong(params.date)}
+      >
+        <SearchForm
+          compact
+          key={buildSearchQuery(params)}
+          initialOrigin={origin}
+          initialDestination={destination}
+          initialDate={params.date}
+          initialModes={params.modes}
+        />
+      </SearchSummary>
       {error ? <SearchError error={error} /> : data && <ResultsBody data={data} params={params} now={now} />}
       <CompareTray />
     </div>
@@ -117,28 +131,43 @@ function hasFilters(p: SearchParams): boolean {
 function ResultsBody({ data, params, now }: { data: SearchResponse; params: SearchParams; now: number }) {
   const failed = data.sources.filter((s) => !s.ok);
   const { summary, query } = data;
-  const byId = new Map(data.items.map((j) => [j.id, j]));
-  const fastest = summary.fastest_id ? byId.get(summary.fastest_id) : undefined;
   const totalPages = Math.max(1, Math.ceil(data.total / data.page_size));
+  const counts = summary.count_by_mode as Record<string, number>;
   const highlight = (id: string) =>
     [
       id === summary.cheapest_id && "Cheapest",
       id === summary.fastest_id && "Fastest",
       id === summary.earliest_id && "Earliest",
     ].filter(Boolean) as string[];
+  const okSources = data.sources.filter((s) => s.ok);
+  const allFresh = okSources.length > 0 && okSources.every((s) => s.freshness === "fresh");
+  const good = allFresh && !data.contains_demo_data; // green only for current, real data
+  const newest = okSources.map((s) => s.retrieved_at).filter(Boolean).sort().at(-1) ?? null;
 
   return (
     <>
-      <div>
-        <h1 className="text-2xl font-bold sm:text-3xl">
-          {query.origin.name} <span className="text-muted">→</span> {query.destination.name}
-        </h1>
-        <p className="mt-1 text-muted">{formatDateLong(query.date)}</p>
+
+      <div
+        role="status"
+        className={`flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl px-4 py-3 text-sm ring-1 ${
+          good ? "bg-success/5 ring-success/30" : "bg-gold/5 ring-gold/30"
+        }`}
+      >
+        <span className="flex items-center gap-2 font-semibold">
+          <span className={`h-2.5 w-2.5 rounded-full ${good ? "bg-success" : "bg-gold"}`} />
+          {data.contains_demo_data ? "Demo data" : allFresh ? "Data current" : "Some data may be outdated"}
+        </span>
+        <span className="text-muted">
+          {okSources.length} source{okSources.length === 1 ? "" : "s"} responded
+          {failed.length ? `, ${failed.length} unavailable` : ""}
+        </span>
+        <span className="text-muted">Prices and times shown exactly as each source reports them</span>
+        {newest && <span className="ml-auto text-muted">Last updated {timeAgo(newest, now) ?? formatTimestamp(newest)}</span>}
       </div>
 
       {data.contains_demo_data && <DemoNotice />}
       {failed.length > 0 && (
-        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl border border-danger/60 px-4 py-3 text-sm">
+        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-2xl border border-danger/50 px-4 py-3 text-sm">
           <p className="flex-1 text-danger">
             <strong>Some sources didn&apos;t respond:</strong> {failed.map((s) => s.provider.name).join(", ")}.
             Results from them are missing, so this list may be incomplete.
@@ -149,56 +178,45 @@ function ResultsBody({ data, params, now }: { data: SearchResponse; params: Sear
       {data.warnings
         .filter((w) => !w.includes("temporarily unavailable"))
         .map((w) => (
-          <p key={w} role="status" className="rounded-xl border border-gold/50 px-4 py-2 text-sm text-gold">
+          <p key={w} role="status" className="rounded-2xl bg-gold/10 px-4 py-2 text-sm text-gold">
             {w}
           </p>
         ))}
 
-      <ResultsControls params={params} />
-      <LabelsHelp />
-
-      {data.total === 0 ? (
-        <StateMessage title={hasFilters(params) ? "No journeys match your filters" : "No journeys found"}>
-          <p>
-            The current dataset has no{" "}
-            {query.modes.length ? `${query.modes.join(" / ")} ` : ""}services from{" "}
-            {query.origin.name} to {query.destination.name} on {formatDateLong(query.date)}
-            {hasFilters(params) ? " that fit the changes, arrival time or budget you set" : ""}.
-            Try another date, include more transport modes, allow more changes, or relax a filter.
-          </p>
-        </StateMessage>
-      ) : (
-        <>
-          <dl className="grid gap-3 sm:grid-cols-3" aria-label="Comparison summary">
-            <Stat label="Cheapest">
-              {summary.min_price && formatMoney(summary.min_price, data.items[0]?.currency ?? "UZS")}
-            </Stat>
-            <Stat label="Fastest">
-              {fastest
-                ? formatDuration(fastest.total_minutes)
-                : summary.fastest_id
-                  ? "See results"
-                  : "—"}
-            </Stat>
-            <Stat label="Options">
-              {data.total} ·{" "}
-              {Object.entries(summary.count_by_mode)
-                .map(([m, n]) => `${n} ${m}`)
-                .join(", ")}
-            </Stat>
-          </dl>
-          <ol className="space-y-3" aria-label="Journeys">
-            {data.items.map((j) => (
-              <li key={j.id}>
-                <JourneyCard journey={j} highlights={highlight(j.id)} now={now} comparable />
-              </li>
-            ))}
-          </ol>
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-5 xl:grid-cols-[16rem_minmax(0,1fr)] xl:items-start">
+        <ResultsControls params={params} counts={counts} />
+        <div className="space-y-4">
+          <ResultsTabs params={params} counts={counts} total={data.total} />
+          <LabelsHelp />
+          {data.total === 0 ? (
+            <StateMessage title={hasFilters(params) ? "No journeys match your filters" : "No journeys found"}>
+              <p>
+                The current dataset has no{" "}
+                {query.modes.length ? `${query.modes.join(" / ")} ` : ""}services from{" "}
+                {query.origin.name} to {query.destination.name} on {formatDateLong(query.date)}
+                {hasFilters(params) ? " that fit the changes, arrival time or budget you set" : ""}.
+                Try another date, include more transport modes, allow more changes, or relax a filter.
+              </p>
+            </StateMessage>
+          ) : (
+            <ol className="space-y-4 pt-2" aria-label="Journeys">
+              {data.items.map((j, i) => (
+                <li key={j.id}>
+                  <JourneyRow
+                    journey={j}
+                    highlights={highlight(j.id)}
+                    now={now}
+                    recommended={i === 0 && data.page === 1 && query.sort === "recommended"}
+                  />
+                </li>
+              ))}
+            </ol>
+          )}
           {totalPages > 1 && (
             <nav aria-label="Pagination" className="flex items-center justify-center gap-4 text-sm">
               {data.page > 1 && (
                 <a
-                  className="rounded-lg border border-line px-3 py-2 hover:border-blue"
+                  className="rounded-full border border-line bg-card px-3 py-2 hover:border-blue"
                   href={`/search?${buildSearchQuery({ ...params, page: data.page - 1 })}`}
                 >
                   Previous
@@ -209,7 +227,7 @@ function ResultsBody({ data, params, now }: { data: SearchResponse; params: Sear
               </span>
               {data.page < totalPages && (
                 <a
-                  className="rounded-lg border border-line px-3 py-2 hover:border-blue"
+                  className="rounded-full border border-line bg-card px-3 py-2 hover:border-blue"
                   href={`/search?${buildSearchQuery({ ...params, page: data.page + 1 })}`}
                 >
                   Next
@@ -217,42 +235,41 @@ function ResultsBody({ data, params, now }: { data: SearchResponse; params: Sear
               )}
             </nav>
           )}
-        </>
-      )}
 
-      <section aria-labelledby="sources" className="rounded-2xl border border-line p-4 text-sm text-muted">
-        <h2 id="sources" className="font-semibold text-ink">
-          Sources &amp; data freshness
-        </h2>
-        <ul className="mt-2 space-y-1">
-          {data.sources.map((s) => (
-            <li key={s.provider.id}>
-              <span className="text-ink">{s.provider.name}</span>
-              {s.provider.is_demo && " (demo)"} —{" "}
-              {s.ok
-                ? `retrieved ${formatTimestamp(s.retrieved_at)} (Tashkent time), ${s.freshness ?? "unknown"}`
-                : "unavailable"}
-              . {s.provider.attribution}
-            </li>
-          ))}
-          {data.sources.length === 0 && <li>No data source covers this route yet.</li>}
-        </ul>
-        <p className="mt-2">
-          Hidden from results: {data.excluded.already_departed} already departed,{" "}
-          {data.excluded.missing_offers} without a fare, {data.excluded.expired_data} with
-          out-of-date data.
-        </p>
-      </section>
+          <div className="flex flex-wrap items-center gap-4 rounded-3xl bg-surface p-5 shadow-soft">
+            <Icon name="route" className="h-9 w-9 text-gold" />
+            <div className="min-w-0 flex-1">
+              <p className="text-lg font-semibold">Compare &amp; choose</p>
+              <p className="text-sm text-muted">Tick Compare on up to 4 options to compare price, time and changes.</p>
+            </div>
+            <CompareCount label="Compare selected" big />
+          </div>
+          <section aria-labelledby="sources" className="rounded-3xl bg-surface p-5 text-sm text-muted shadow-soft">
+            <h2 id="sources" className="font-semibold text-ink">
+              Sources &amp; data freshness
+            </h2>
+            <ul className="mt-2 space-y-1">
+              {data.sources.map((s) => (
+                <li key={s.provider.id}>
+                  <span className="text-ink">{s.provider.name}</span>
+                  {s.provider.is_demo && " (demo)"} —{" "}
+                  {s.ok
+                    ? `retrieved ${formatTimestamp(s.retrieved_at)} (Tashkent time), ${s.freshness ?? "unknown"}`
+                    : "unavailable"}
+                  . {s.provider.attribution}
+                </li>
+              ))}
+              {data.sources.length === 0 && <li>No data source covers this route yet.</li>}
+            </ul>
+            <p className="mt-2">
+              Hidden from results: {data.excluded.already_departed} already departed,{" "}
+              {data.excluded.missing_offers} without a fare, {data.excluded.expired_data} with
+              out-of-date data.
+            </p>
+          </section>
+        </div>
+      </div>
     </>
-  );
-}
-
-function Stat({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border border-line bg-surface px-4 py-3">
-      <dt className="text-xs uppercase tracking-wider text-muted">{label}</dt>
-      <dd className="mt-1 font-semibold">{children}</dd>
-    </div>
   );
 }
 

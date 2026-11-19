@@ -37,6 +37,12 @@ const nextConfig: NextConfig = {
   partialPrefetching: true,
   poweredByHeader: false,
   output: "standalone",
+  // Windows can block Turbopack's child-process socket handshake. On the supported Node 22
+  // runtime use workers locally; Vercel/Linux retains the default child-process strategy.
+  experimental:
+    process.platform === "win32" && process.versions.node.startsWith("22.")
+      ? { turbopackPluginRuntimeStrategy: "workerThreads" }
+      : undefined,
   turbopack: {
     rules: {
       "*.css": {
@@ -46,6 +52,9 @@ const nextConfig: NextConfig = {
     },
   },
   async rewrites() {
+    // Services bindings exist only at runtime. Root vercel.json owns public API routing;
+    // never bake localhost (or a previous deployment URL) into the Vercel build.
+    if (process.env.VERCEL === "1") return [];
     return [
       { source: "/api/:path*", destination: `${API_INTERNAL_URL}/api/:path*` },
       { source: "/health", destination: `${API_INTERNAL_URL}/health` },

@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { ApiError, clientApi } from "@/lib/api";
 import { safeNextPath } from "@/lib/format";
 import { notifySessionChanged } from "@/lib/session";
 
 export function AuthForm({ mode, next }: { mode: "login" | "register"; next?: string }) {
+  // Unique per form: Next keeps visited pages mounted (hidden), so fixed ids would collide.
+  const uid = useId();
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -48,42 +50,42 @@ export function AuthForm({ mode, next }: { mode: "login" | "register"; next?: st
   }
 
   const input =
-    "w-full rounded-xl border border-line bg-navy px-3 py-3 text-ink placeholder:text-muted/60 focus:border-blue";
+    "w-full rounded-xl border border-line bg-card px-3 py-3 text-ink placeholder:text-muted/60 focus:border-blue";
 
   return (
     // method="post": if JS hasn't loaded, a native submit must never put the password in the URL.
     <form method="post" onSubmit={submit} noValidate className="space-y-4"
-      aria-describedby={error ? "auth-error" : undefined}>
+      aria-describedby={error ? `${uid}-auth-error` : undefined}>
       {isRegister && (
         <div>
-          <label htmlFor="name" className="mb-1 block text-sm text-muted">
+          <label htmlFor={`${uid}-name`} className="mb-1 block text-sm text-muted">
             Name <span className="text-muted/70">(optional)</span>
           </label>
-          <input id="name" name="display_name" maxLength={80}
+          <input id={`${uid}-name`} name="display_name" maxLength={80}
             autoComplete="name" className={input} />
         </div>
       )}
       <div>
-        <label htmlFor="email" className="mb-1 block text-sm text-muted">Email</label>
-        <input id="email" name="email" type="email" required
+        <label htmlFor={`${uid}-email`} className="mb-1 block text-sm text-muted">Email</label>
+        <input id={`${uid}-email`} name="email" type="email" required
           autoComplete="email" maxLength={254} aria-invalid={!!fieldErrors.email}
-          aria-describedby={fieldErrors.email ? "email-err" : undefined} className={input} />
-        {fieldErrors.email && <p id="email-err" className="mt-1 text-sm text-danger">{fieldErrors.email}</p>}
+          aria-describedby={fieldErrors.email ? `${uid}-email-err` : undefined} className={input} />
+        {fieldErrors.email && <p id={`${uid}-email-err`} className="mt-1 text-sm text-danger">{fieldErrors.email}</p>}
       </div>
       <div>
-        <label htmlFor="password" className="mb-1 block text-sm text-muted">Password</label>
-        <input id="password" name="password" type="password" required maxLength={128}
+        <label htmlFor={`${uid}-password`} className="mb-1 block text-sm text-muted">Password</label>
+        <input id={`${uid}-password`} name="password" type="password" required maxLength={128}
           autoComplete={isRegister ? "new-password" : "current-password"}
           aria-invalid={!!fieldErrors.password}
-          aria-describedby={isRegister ? "pw-hint" : fieldErrors.password ? "pw-err" : undefined}
+          aria-describedby={isRegister ? `${uid}-pw-hint` : fieldErrors.password ? `${uid}-pw-err` : undefined}
           className={input} />
         {isRegister && !fieldErrors.password && (
-          <p id="pw-hint" className="mt-1 text-xs text-muted">At least 10 characters.</p>
+          <p id={`${uid}-pw-hint`} className="mt-1 text-xs text-muted">At least 10 characters.</p>
         )}
-        {fieldErrors.password && <p id="pw-err" className="mt-1 text-sm text-danger">{fieldErrors.password}</p>}
+        {fieldErrors.password && <p id={`${uid}-pw-err`} className="mt-1 text-sm text-danger">{fieldErrors.password}</p>}
       </div>
       {error && (
-        <p id="auth-error" role="alert" className="rounded-lg border border-danger/50 px-3 py-2 text-sm text-danger">
+        <p id={`${uid}-auth-error`} role="alert" className="rounded-lg border border-danger/50 px-3 py-2 text-sm text-danger">
           {error}
         </p>
       )}

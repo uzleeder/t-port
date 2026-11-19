@@ -9,7 +9,7 @@ export default function GlobalError({ reset }: { error: Error; reset: () => void
         <button
           type="button"
           onClick={reset}
-          className="mt-4 rounded-xl border border-line px-4 py-2 text-sm hover:border-blue"
+          className="mt-4 rounded-full border border-line bg-card px-4 py-2 text-sm hover:border-blue"
         >
           Try again
         </button>

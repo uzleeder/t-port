@@ -7,7 +7,7 @@ export const metadata: Metadata = { title: "Sign in" };
 export default function LoginPage({ searchParams }: PageProps<"/login">) {
   return (
     <AuthShell title="Sign in" subtitle="Access your saved journeys and recent searches.">
-      <Suspense fallback={<div className="h-64 animate-pulse rounded-xl bg-navy" />}>
+      <Suspense fallback={<div className="h-64 animate-pulse rounded-3xl bg-surface" />}>
         <AuthFormWithNext searchParams={searchParams} mode="login" />
       </Suspense>
     </AuthShell>

@@ -8,6 +8,9 @@ import { ApiError, parseResponse } from "./api";
  * rate-limits per visitor rather than per web server. Call only inside a Suspense boundary.
  */
 export async function serverApi<T>(path: string, init?: RequestInit): Promise<T> {
+  if (process.env.VERCEL === "1" && !process.env.API_INTERNAL_URL) {
+    throw new ApiError(503, "backend_unconfigured", "The backend service binding is missing.");
+  }
   const base = process.env.API_INTERNAL_URL ?? "http://127.0.0.1:8000";
   const [incoming, jar] = await Promise.all([headers(), cookies()]);
   const forwarded = incoming.get("x-forwarded-for");

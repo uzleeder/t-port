@@ -1,6 +1,27 @@
 import type { SearchResponse } from "./types";
 
+/** A place from T-AI's knowledge (quoted from the place-card pack, with its sources). */
+export interface PlaceAnswer {
+  key: string;
+  region: string;
+  region_name: string;
+  kind: string;
+  name: string;
+  area: string;
+  category: string;
+  history: string;
+  see: string;
+  tip: string;
+  sources: { label: string; url: string }[];
+  image: string;
+  explore_url: string;
+  city_id: string;
+  city_name: string;
+}
+
 export interface InterpretResponse {
+  assistant: string;
+  language: "en" | "uz";
   engine: string;
   fallback_used: boolean;
   intent: {
@@ -25,6 +46,8 @@ export interface InterpretResponse {
   search_query: string | null;
   explanation: string | null;
   results: SearchResponse | null;
+  answer: string | null;
+  places: PlaceAnswer[];
   disclaimer: string;
 }
 

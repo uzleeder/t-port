@@ -98,6 +98,7 @@ class UserRepository:
         """Removes the account, its sessions and saved journeys. Activity rows keep no user link."""
         self.db.execute(delete(m.SavedJourney).where(m.SavedJourney.user_id == user.id))
         self.db.execute(delete(m.UserPreferences).where(m.UserPreferences.user_id == user.id))
+        self.db.execute(delete(m.UserAvatar).where(m.UserAvatar.user_id == user.id))
         self.db.execute(delete(m.Session).where(m.Session.user_id == user.id))
         self.db.execute(
             update(m.JourneySearch).where(m.JourneySearch.user_id == user.id).values(user_id=None)
@@ -455,6 +456,32 @@ def _to_departure(r: m.DepartureRow) -> Departure:
 
 
 # --- preferences and booking hand-offs ----------------------------------------------------
+class AvatarRepository:
+    def __init__(self, db: Session) -> None:
+        self.db = db
+
+    def get(self, user_id: uuid.UUID) -> m.UserAvatar | None:
+        return self.db.get(m.UserAvatar, user_id)
+
+    def updated_at(self, user_id: uuid.UUID) -> datetime | None:
+        """When the photo last changed (cheap: does not load the image bytes)."""
+        return self.db.scalar(select(m.UserAvatar.updated_at).where(m.UserAvatar.user_id == user_id))
+
+    def put(self, user_id: uuid.UUID, content_type: str, data: bytes, now: datetime) -> m.UserAvatar:
+        row = self.db.get(m.UserAvatar, user_id)
+        if row is None:
+            row = m.UserAvatar(user_id=user_id)
+            self.db.add(row)
+        row.content_type = content_type
+        row.data = data
+        row.updated_at = now
+        self.db.flush()
+        return row
+
+    def delete(self, user_id: uuid.UUID) -> bool:
+        return bool(self.db.execute(delete(m.UserAvatar).where(m.UserAvatar.user_id == user_id)).rowcount)
+
+
 class PreferencesRepository:
     def __init__(self, db: Session) -> None:
         self.db = db

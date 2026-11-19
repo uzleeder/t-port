@@ -27,7 +27,7 @@ export function JourneyCard({
   const updated = timeAgo(journey.legs.map((l) => l.retrieved_at).sort()[0], now);
 
   return (
-    <article className="group relative rounded-2xl border border-line bg-surface p-4 transition hover:border-blue/60 sm:p-5">
+    <article className="group relative rounded-3xl bg-surface p-4 shadow-soft transition hover:-translate-y-0.5 hover:bg-card sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="text-xl font-bold tabular-nums sm:text-2xl">

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 
 def make_engine(url: str, *, echo: bool = False) -> Engine:
@@ -26,6 +28,11 @@ def make_engine(url: str, *, echo: bool = False) -> Engine:
             pool_timeout=10,
             connect_args={"connect_timeout": 5},
         )
+        if os.environ.get("VERCEL") == "1":
+            # Use the managed database's external pooler; avoid 15 idle connections per instance.
+            for key in ("pool_size", "max_overflow", "pool_timeout"):
+                kwargs.pop(key)
+            kwargs["poolclass"] = NullPool
     engine = create_engine(url, **kwargs)
     if url.startswith("sqlite"):
 

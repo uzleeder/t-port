@@ -66,6 +66,18 @@ npm run dev
 
 Open http://localhost:2028. API docs (non-production only): http://localhost:8000/docs.
 
+After the first-time setup above, one command from the repository root runs both together, with
+`[api]` / `[web]` prefixed output; Ctrl+C stops both:
+
+```bash
+node scripts/dev.mjs            # development (auto-reload)
+node scripts/dev.mjs --prod     # API + the built site (run `npm --prefix frontend run build` first)
+```
+
+It first brings the database up to date (`alembic upgrade head`), then uses a local SQLite database
+(`backend/.local/tport-dev.db`) and development settings unless you
+set `TPORT_*` variables yourself.
+
 Without Docker you can point `TPORT_DATABASE_URL` at a SQLite file for a quick local run
 (`sqlite:///./.local/dev.db`). PostgreSQL is the supported database for anything beyond that.
 
@@ -116,6 +128,10 @@ python -m app.cli purge-activity          # apply the activity retention period 
 ```
 
 See [docs/deployment.md](docs/deployment.md) for HTTPS, managed PostgreSQL, logging, health checks and backups.
+
+For Vercel (Next.js + FastAPI in one Services project), follow
+[docs/vercel-deployment.md](docs/vercel-deployment.md). Import the repository root (`.`), configure
+the managed PostgreSQL URL and HTTPS origins, and run the explicit database setup step before release.
 
 ## Documentation
 

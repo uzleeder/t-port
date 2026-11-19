@@ -27,3 +27,6 @@ Thumbs.db
 
 # Local tool config (machine-specific paths)
 .claude/
+
+.vercel
+.env*

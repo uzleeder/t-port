@@ -8,11 +8,11 @@ export function Badge({
   tone?: "neutral" | "blue" | "gold" | "danger" | "success";
 }) {
   const tones = {
-    neutral: "border-line text-muted",
-    blue: "border-blue/60 text-ink bg-blue/10",
-    gold: "border-gold/60 text-gold",
-    danger: "border-danger/60 text-danger",
-    success: "border-success/50 text-success",
+    neutral: "border-line bg-card text-muted",
+    blue: "border-transparent bg-surface-2 text-ink",
+    gold: "border-amber/50 bg-amber/15 text-gold",
+    danger: "border-danger/30 bg-danger/5 text-danger",
+    success: "border-success/30 bg-success/5 text-success",
   } as const;
   return (
     <span

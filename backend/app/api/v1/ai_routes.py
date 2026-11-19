@@ -1,4 +1,5 @@
-"""POST /api/v1/ai/interpret — natural-language request -> validated parameters -> real results."""
+"""POST /api/v1/ai/interpret — T-AI: natural-language request -> validated parameters -> real results,
+plus what T-AI knows about the places mentioned (from the place-card pack, with sources)."""
 
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, field_validator
 
+from app.ai.knowledge import Lang, Place, PlaceKnowledge
 from app.ai.service import AssistantService, clarification, explain, query_string
 from app.api.deps import Principal, optional_principal
 from app.api.v1.schemas import SearchResponse
@@ -52,7 +54,55 @@ class IntentOut(BaseModel):
     compare_modes: bool = False
 
 
+class PlaceSourceOut(BaseModel):
+    label: str
+    url: str
+
+
+class PlaceOut(BaseModel):
+    """A place from T-AI's knowledge, in the language of the request. Text is quoted, not generated."""
+
+    key: str
+    region: str
+    region_name: str
+    kind: str
+    name: str
+    area: str
+    category: str
+    history: str
+    see: str
+    tip: str
+    sources: list[PlaceSourceOut]
+    image: str = Field(description="An artistic illustration, not a photo.")
+    explore_url: str
+    city_id: str = Field(description="Nearest city T-Port finds journeys to.")
+    city_name: str
+
+    @classmethod
+    def of(cls, p: Place, lang: Lang, knowledge: PlaceKnowledge) -> PlaceOut:
+        t = p.text[lang]
+        return cls(
+            key=p.key,
+            region=p.region,
+            region_name=knowledge.region_name(p.region, lang),
+            kind=p.kind,
+            name=t.name,
+            area=t.area,
+            category=t.category,
+            history=t.history,
+            see=t.see,
+            tip=t.tip,
+            sources=[PlaceSourceOut(label=label, url=url) for label, url in p.sources],
+            image=p.image,
+            explore_url=p.explore_url,
+            city_id=p.city_id,
+            city_name=p.city_name,
+        )
+
+
 class InterpretResponse(BaseModel):
+    assistant: str = "T-AI"
+    language: str = Field(default="en", description="Language T-AI answered place questions in: en or uz.")
     engine: str = Field(description="'rules' (deterministic) or the LLM engine used.")
     fallback_used: bool
     intent: IntentOut
@@ -61,9 +111,11 @@ class InterpretResponse(BaseModel):
     search_query: str | None = Field(description="Query string for /search reproducing this request.")
     explanation: str | None = Field(description="Generated from returned data only.")
     results: SearchResponse | None
+    answer: str | None = Field(default=None, description="T-AI's lead-in to the places below.")
+    places: list[PlaceOut] = Field(default_factory=list)
     disclaimer: str = (
-        "The assistant only interprets your request. Prices, times and operators come from the "
-        "listed data sources."
+        "T-AI only interprets your request. Prices, times and operators come from the listed data "
+        "sources; place information comes from the sources listed with each place."
     )
 
 
@@ -104,12 +156,33 @@ async def interpret(
         prefer_modes=sorted(m.value for m in intent.prefer_modes),
         compare_modes=intent.compare_modes,
     )
+    knowledge = PlaceKnowledge.load()
+    catalog = request.app.state.catalog
+    lang = knowledge.language(body.text)
+    mentioned = knowledge.find(body.text, catalog)
     common = dict(
+        language=lang,
         engine=result.engine,
         fallback_used=result.outcome in ("fallback", "provider_error", "invalid_output"),
         intent=intent_out,
     )
     if not intent.complete:
+        asks = knowledge.asks_about_places(body.text) or knowledge.names_place(body.text)
+        if mentioned and asks:
+            # A question about places (or just a place's name): answer from the knowledge base. A
+            # specific problem with the trip (e.g. a foreign-currency budget) is still explained;
+            # otherwise T-AI offers to plan the trip.
+            issue = intent.unsupported_reason or intent.problems
+            return InterpretResponse(
+                **common,
+                needs_clarification=True,
+                clarification=clarification(intent) if issue else knowledge.follow_up(lang),
+                search_query=None,
+                explanation=None,
+                results=None,
+                answer=knowledge.intro(mentioned, lang),
+                places=[PlaceOut.of(p, lang, knowledge) for p in mentioned],
+            )
         return InterpretResponse(
             **common,
             needs_clarification=True,
@@ -118,6 +191,14 @@ async def interpret(
             explanation=None,
             results=None,
         )
+
+    # A trip: also share what T-AI knows about the destination's region.
+    region = knowledge.region_of_location(intent.destination_id, catalog)
+    trip_places = knowledge.in_region(region) if region else []
+    extras = dict(
+        answer=knowledge.intro(trip_places, lang, for_trip=True) if trip_places else None,
+        places=[PlaceOut.of(p, lang, knowledge) for p in trip_places],
+    )
 
     try:
         search_result = await assistant.run_search(intent)
@@ -129,6 +210,7 @@ async def interpret(
             search_query=None,
             explanation=exc.message,
             results=None,
+            **extras,
         )
     return InterpretResponse(
         **common,
@@ -137,6 +219,7 @@ async def interpret(
         search_query=query_string(intent),
         explanation=explain(intent, search_result),
         results=SearchResponse.of(search_result),
+        **extras,
     )
 
 
