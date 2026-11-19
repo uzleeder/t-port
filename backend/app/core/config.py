@@ -5,13 +5,17 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="TPORT_", env_file=".env", extra="ignore", env_ignore_empty=True
+        env_prefix="TPORT_",
+        env_file=".env",
+        extra="ignore",
+        env_ignore_empty=True,
+        populate_by_name=True,
     )
 
     environment: Literal["development", "test", "production"] = "development"
@@ -46,8 +50,20 @@ class Settings(BaseSettings):
     demo_provider_mode: Literal["live", "stored"] = "live"
 
     # --- database -------------------------------------------------------------------
-    database_url: str = "postgresql+psycopg://tport:tport@127.0.0.1:5432/tport"
+    database_url: str = Field(
+        default="postgresql+psycopg://tport:tport@127.0.0.1:5432/tport",
+        validation_alias=AliasChoices("TPORT_DATABASE_URL", "DATABASE_URL"),
+    )
     database_echo: bool = False
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _postgres_driver(cls, value: str) -> str:
+        # Neon/Supabase use standard PostgreSQL URLs; this app installs psycopg 3.
+        for prefix in ("postgres://", "postgresql://"):
+            if value.startswith(prefix):
+                return "postgresql+psycopg://" + value[len(prefix) :]
+        return value
 
     # --- sessions & auth ---------------------------------------------------------------
     session_cookie_name: str = "tport_session"

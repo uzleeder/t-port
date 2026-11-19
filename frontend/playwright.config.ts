@@ -9,11 +9,15 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,
+  // The local API uses SQLite: more parallel sign-ups than this queue on its single writer and time out.
+  workers: 2,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["github"], ["list"]] : "list",
   use: {
     baseURL: `http://localhost:${PORT}`,
     trace: "retain-on-failure",
+    // The landing intro is skipped under reduced motion; e2e/landing.spec.ts turns it back on.
+    reducedMotion: "reduce",
   },
   projects: [
     { name: "desktop", use: { ...devices["Desktop Chrome"] } },

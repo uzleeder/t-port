@@ -1,0 +1,16 @@
+.git
+.claude
+.env
+.env.*
+backend/.venv
+backend/.local
+backend/.pytest_cache
+backend/.ruff_cache
+backend/tests
+**/__pycache__
+**/*.pyc
+frontend/node_modules
+frontend/.next
+frontend/test-results
+frontend/playwright-report
+docs/screenshots

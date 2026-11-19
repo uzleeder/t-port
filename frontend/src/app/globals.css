@@ -1,29 +1,160 @@
 @import "tailwindcss";
 
-/* T-Port design tokens. The product is dark-first by design. */
+/*
+ * T-Port design tokens. Dark (night navy, default) and light (lavender glass) themes share the same
+ * token names; the light values live under :root[data-theme="light"], set before first paint by the
+ * script in app/layout.tsx. Roles: navy = page, surface/card = glass, blue = primary action,
+ * gold = highlight and premium call to action. Text on skyline art stays white in both themes.
+ */
 @theme {
-  --color-navy: #080f23;
-  --color-surface: #101d38;
-  --color-surface-2: #16264a;
-  --color-line: #24365f;
-  --color-blue: #377dff;
-  --color-blue-hover: #5a94ff;
-  --color-gold: #d6ad61;
-  --color-ink: #f7f9ff;
-  --color-muted: #b7c5dc;
-  --color-danger: #ff8a8a;
-  --color-success: #5fd39a;
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --color-navy: #050b18;
+  --color-surface: rgb(120 150 255 / 0.09);
+  --color-surface-2: rgb(150 180 255 / 0.16);
+  --color-card: rgb(160 185 255 / 0.1);
+  --color-line: rgb(170 195 255 / 0.22);
+  --color-blue: #0a6cf0;
+  --color-blue-hover: #007aff;
+  --color-sky: #62cfff;
+  --color-violet: #8b7bff;
+  --color-gold: #d6b36a;
+  --color-gold-strong: #e6c682;
+  --color-ink: #eef3ff;
+  --color-muted: #a4b2c8;
+  --color-danger: #ff8f8f;
+  --color-success: #4fd18b;
+  --color-amber: #d6b36a;
+  --font-sans: var(--font-manrope), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --radius-xl: 0.9rem;
+  --radius-2xl: 1.2rem;
+  --radius-3xl: 1.5rem;
+  --shadow-soft: inset 0 1px 0 rgb(255 255 255 / 0.22), inset 0 -1px 0 rgb(255 255 255 / 0.04),
+    0 20px 50px -24px rgb(0 0 0 / 0.8);
+  --shadow-float: 0 18px 44px -12px rgb(0 0 0 / 0.75), 0 0 0 1px rgb(110 150 255 / 0.25);
+  --shadow-glow: 0 10px 30px -8px rgb(47 123 255 / 0.65);
+  --shadow-gold: 0 10px 30px -8px rgb(232 182 92 / 0.55);
 }
 
 :root {
   color-scheme: dark;
+  --glass-rim: rgb(200 215 255 / 0.18);
+  --glass-sheen: linear-gradient(135deg, rgb(255 255 255 / 0.12), rgb(255 255 255 / 0.02) 45%, rgb(255 255 255 / 0.05));
+  --orb-a: rgb(47 123 255 / 0.55);
+  --orb-b: rgb(139 123 255 / 0.45);
+  --orb-c: rgb(60 200 255 / 0.35);
+  --orb-d: rgb(232 182 92 / 0.25);
+  --page-bg:
+    radial-gradient(60rem 30rem at 80% -10%, rgb(47 123 255 / 0.22), transparent 70%),
+    radial-gradient(40rem 26rem at -10% 20%, rgb(60 200 255 / 0.08), transparent 70%),
+    radial-gradient(40rem 30rem at 0% 110%, rgb(232 182 92 / 0.1), transparent 70%),
+    linear-gradient(180deg, #0b1830 0%, #050b18 60%, #040914 100%);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  /* Warm cream: cream page, white cards, near-black for primary actions, blue as the accent. */
+  --color-navy: #f4f1e7;
+  --color-surface: rgb(255 254 250 / 0.78);
+  --color-surface-2: rgb(255 255 255 / 0.92);
+  --color-card: rgb(236 231 218 / 0.75);
+  --color-line: rgb(110 98 70 / 0.18);
+  --color-blue: #1c1c1a;
+  --color-blue-hover: #3a3833;
+  --color-sky: #1f5fff;
+  --color-violet: #5a4bd6;
+  --color-gold: #8f5a00;
+  --color-gold-strong: #a86c00;
+  --color-ink: #1c1c1a;
+  --color-muted: #6b665a;
+  --color-danger: #b42318;
+  --color-success: #157a3c;
+  --color-amber: #c98a1c;
+  --shadow-soft: inset 0 1px 0 rgb(255 255 255 / 0.95), 0 1px 2px rgb(70 60 30 / 0.05),
+    0 14px 30px -16px rgb(70 60 30 / 0.28);
+  --shadow-float: 0 18px 40px -14px rgb(70 60 30 / 0.3), 0 0 0 1px rgb(255 255 255 / 0.8);
+  --shadow-glow: 0 10px 22px -10px rgb(28 28 26 / 0.45);
+  --shadow-gold: 0 10px 26px -10px rgb(180 130 40 / 0.45);
+  --glass-rim: rgb(255 255 255 / 0.85);
+  --glass-sheen: linear-gradient(135deg, rgb(255 255 255 / 0.6), rgb(255 255 255 / 0.15) 50%, rgb(255 255 255 / 0.35));
+  --orb-a: rgb(255 214 160 / 0.35);
+  --orb-b: rgb(196 212 255 / 0.32);
+  --orb-c: rgb(255 232 205 / 0.4);
+  --orb-d: rgb(210 232 222 / 0.3);
+  --page-bg:
+    radial-gradient(55rem 32rem at 100% -5%, rgb(255 226 180 / 0.35), transparent 70%),
+    radial-gradient(50rem 30rem at -10% 15%, rgb(214 226 255 / 0.35), transparent 70%),
+    linear-gradient(170deg, #f6f3ea 0%, #f1ede3 55%, #ece7da 100%);
 }
 
 body {
-  background: var(--color-navy);
+  background: var(--page-bg);
+  background-attachment: fixed;
   color: var(--color-ink);
+  overflow-x: clip; /* full-bleed landing sections */
+}
+
+/*
+ * Glassmorphism. Soft colour orbs drift behind the page; every raised card (shadow-soft/-float) is
+ * frosted glass: heavy blur, translucent tint, a diagonal sheen, a bright top edge and a thin rim.
+ * Kept in the components layer so utilities such as bg-gradient-* still override the sheen.
+ */
+body::before {
+  content: "";
+  position: fixed;
+  inset: -10vmax;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(28vmax 28vmax at 12% 18%, var(--orb-a), transparent 70%),
+    radial-gradient(30vmax 30vmax at 88% 12%, var(--orb-b), transparent 70%),
+    radial-gradient(26vmax 26vmax at 75% 78%, var(--orb-c), transparent 70%),
+    radial-gradient(22vmax 22vmax at 20% 88%, var(--orb-d), transparent 70%);
+  filter: blur(30px);
+  animation: tport-orbs 38s ease-in-out infinite alternate;
+}
+@keyframes tport-orbs {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(3vmax, -2vmax, 0) scale(1.06);
+  }
+  100% {
+    transform: translate3d(-3vmax, 2vmax, 0) scale(1);
+  }
+}
+
+@layer components {
+  .shadow-soft,
+  .shadow-float {
+    -webkit-backdrop-filter: blur(26px) saturate(1.6);
+    backdrop-filter: blur(26px) saturate(1.6);
+  }
+  .shadow-soft {
+    background-image: var(--glass-sheen);
+    outline: 1px solid var(--glass-rim);
+    outline-offset: -1px;
+  }
+}
+
+/* Primary buttons glow in the brand blue; gold buttons are the premium call to action. */
+.bg-blue {
+  box-shadow: var(--shadow-glow);
+}
+.btn-gold {
+  background: linear-gradient(180deg, #f6cf7d, #dca24a);
+  color: #1d1404;
+  box-shadow: var(--shadow-gold);
+}
+.btn-gold:hover {
+  background: linear-gradient(180deg, #f9d88f, #e3ad58);
+}
+
+/* On phones the floating bottom nav covers ~6rem: keep focused/scrolled-to elements above it. */
+@media (max-width: 767px) {
+  html {
+    scroll-padding-bottom: 7rem;
+  }
 }
 
 /* Visible keyboard focus everywhere. */
@@ -33,10 +164,22 @@ body {
   border-radius: 6px;
 }
 
-/* Date picker icon readable on dark backgrounds. */
 input[type="date"]::-webkit-calendar-picker-indicator {
-  filter: invert(0.8);
   cursor: pointer;
+  filter: invert(0.85);
+}
+:root[data-theme="light"] input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: none;
+  opacity: 0.6;
+}
+
+.tport-pulse {
+  animation: tport-pulse 1.4s ease-in-out infinite;
+}
+@keyframes tport-pulse {
+  50% {
+    opacity: 0.35;
+  }
 }
 
 /* Hero logo: CSS 3D idle sway + orbital comet (see components/Logo.tsx). */
@@ -71,8 +214,10 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  body::before,
   .tport-orbit-sway,
-  .tport-comet {
+  .tport-comet,
+  .tport-pulse {
     animation: none;
   }
 }
@@ -84,4 +229,175 @@ input[type="date"]::-webkit-calendar-picker-indicator {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+
+/* ------------------------------------------------------------------------------------------------
+ * i18n: <T> renders every language; only the one matching <html lang> is shown (see lib/i18n.ts).
+ * ---------------------------------------------------------------------------------------------- */
+[data-l] { display: none; }
+:root[lang="en"] [data-l="en"],
+:root[lang="uz"] [data-l="uz"],
+:root[lang="ru"] [data-l="ru"] { display: contents; }
+
+/* Full-bleed sections inside the centred page column. */
+.bleed { width: 100vw; margin-inline: calc(50% - 50vw); }
+
+/* The floating header turns more opaque once the page scrolls (set by components/HeaderScroll). */
+header > nav[aria-label="Main"] { transition: background-color 0.3s ease, box-shadow 0.3s ease; }
+:root[data-scrolled] header > nav[aria-label="Main"] { background-color: rgb(8 16 36 / 0.82); }
+:root[data-theme="light"][data-scrolled] header > nav[aria-label="Main"] { background-color: rgb(251 250 245 / 0.9); }
+
+/* ------------------------------------------------------------------------------------------------
+ * Landing intro (components/landing/IntroAnimation): ~2.3 s, first visit per session, never with
+ * reduced motion. Hidden unless <html data-intro="play">, so the page works without it.
+ * ---------------------------------------------------------------------------------------------- */
+.tport-intro { display: none; }
+:root[data-intro="play"] .tport-intro {
+  position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: #050b18; overflow: hidden;
+  animation: intro-out 0.45s ease 1.85s forwards;
+}
+:root[data-intro="play"] body { overflow: hidden; }
+.tport-intro .beam {
+  position: absolute; top: 50%; left: 0; height: 2px; width: 45vw; border-radius: 2px;
+  background: linear-gradient(90deg, transparent, #007aff, #62cfff, transparent);
+  box-shadow: 0 0 24px 4px rgb(0 122 255 / 0.55);
+  transform: translateX(-50vw); animation: intro-beam 0.9s cubic-bezier(.6, 0, .3, 1) 0.05s forwards;
+}
+.tport-intro .emblem { opacity: 0; transform: scale(0.82); animation: intro-in 0.55s ease 0.45s forwards; }
+.tport-intro .ring { stroke-dasharray: 100; stroke-dashoffset: 100; animation: intro-ring 0.8s ease-out 0.7s forwards; }
+.tport-intro .word { opacity: 0; transform: translateY(8px); animation: intro-in 0.45s ease 1s forwards; }
+.tport-intro .tag { opacity: 0; transform: translateY(8px); animation: intro-in 0.45s ease 1.25s forwards; }
+@keyframes intro-beam { to { transform: translateX(120vw); } }
+@keyframes intro-in { to { opacity: 1; transform: none; } }
+@keyframes intro-ring { to { stroke-dashoffset: 0; } }
+@keyframes intro-out { to { opacity: 0; visibility: hidden; } }
+
+/* ------------------------------------------------------------------------------------------------
+ * Landing motion: sections fade up as they enter; the hero montage drifts slightly (parallax).
+ * Pure CSS scroll timelines: no script, nothing at all with reduced motion or older browsers.
+ * ---------------------------------------------------------------------------------------------- */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .reveal { animation: reveal-in linear both; animation-timeline: view(); animation-range: entry 0% entry 45%; }
+    .parallax { animation: parallax linear both; animation-timeline: scroll(root); animation-range: 0 100vh; }
+  }
+}
+@keyframes reveal-in { from { opacity: 0; transform: translateY(28px); } to { opacity: 1; transform: none; } }
+@keyframes parallax { to { transform: translateY(9vh) scale(1.04); } }
+
+/* Hero montage: illustrations blended side by side into one panorama. */
+.montage { container-type: size; --n: 2; --o: 22cqw; }
+@media (min-width: 640px) { .montage { --n: 3; --o: 14cqw; } }
+@media (min-width: 768px) { .montage { --n: 4; --o: 10cqw; } }
+@media (min-width: 1024px) { .montage { --n: 5; --o: 8cqw; } }
+.montage-piece {
+  width: calc((100cqw + var(--n) * var(--o)) / var(--n)); /* first fade starts off-screen; last ends at the edge */
+  margin-left: calc(-1 * var(--o));
+  mask-image: linear-gradient(90deg, transparent, #000 var(--o), #000 calc(100% - var(--o)), transparent);
+}
+
+/* Gentle elevation for landing cards. */
+.lift { transition: transform 0.35s ease, box-shadow 0.35s ease; }
+.lift:hover { transform: translateY(-4px); }
+
+/* Vision globe: arcs drift along their dashes; Uzbekistan's marker breathes. Off with reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .globe-arc { animation: globe-arc 6s linear infinite; }
+  .globe-pulse { transform-box: fill-box; transform-origin: center; animation: globe-pulse 3.2s ease-in-out infinite; }
+}
+@keyframes globe-arc { to { stroke-dashoffset: -44; } }
+@keyframes globe-pulse { 50% { transform: scale(1.6); opacity: 0.35; } }
+
+/* ------------------------------------------------------------------------------------------------
+ * Landing theme colours: the hero, intro, vision and closing sections read these, so each has a
+ * designed dark (default) and light version.
+ * ---------------------------------------------------------------------------------------------- */
+:root {
+  --l-fade: 5 11 24;
+  --l-text: 255 255 255;
+  --l-sub: 213 221 234;
+  --l-muted: 164 178 200;
+  --l-eyebrow: #62cfff;
+  --l-gold: #d6b36a;
+  --l-grad: linear-gradient(90deg, #62cfff, #3d9bff, #007aff);
+  --l-btn-bg: rgb(255 255 255 / 0.1);
+  --l-btn-bg-hover: rgb(255 255 255 / 0.2);
+  --l-btn-ring: rgb(255 255 255 / 0.3);
+  --l-section: radial-gradient(50rem 32rem at 75% 45%, rgb(0 122 255 / 0.16), transparent 70%), #040914;
+  --l-section-solid: #040914;
+  --l-card: rgb(255 255 255 / 0.05);
+  --l-card-ring: rgb(255 255 255 / 0.12);
+  --g-a: #163f86; --g-b: #0b1830; --g-c: #050b18; --g-line: #62cfff; --g-shade: #050b18; --g-dot: #62cfff; --g-region: #e6c682; --g-uz: #62cfff;
+  --g-land: rgb(98 207 255 / 0.13); --g-land-line: rgb(98 207 255 / 0.35); --g-region-fill: rgb(214 179 106 / 0.42);
+  --h-sky: linear-gradient(180deg, #050b18 0%, #0b1830 40%, #183a7a 72%, #3d4a72 86%, #7a6a52 100%);
+  --h-sun-a: #f6dc9c; --h-sun-b: #e6c682;
+  --h-far-a: #2a4686; --h-far-b: #14295a; --h-near-a: #13234d; --h-near-b: #0b1830;
+  --h-sil: #060d1f; --h-ground: #050b18; --h-lit: #d6b36a;
+  --h-train: #0e2050; --h-train-line: #62cfff; --h-plane: #cfefff; --h-path: #62cfff;
+}
+:root[data-theme="light"] {
+  --l-fade: 244 241 231;
+  --l-text: 28 28 26;
+  --l-sub: 70 66 56;
+  --l-muted: 107 102 90;
+  --l-eyebrow: #1f5fff;
+  --l-gold: #8f5a00;
+  --l-grad: linear-gradient(90deg, #2f7bff, #1f5fff, #2346d6);
+  --l-btn-bg: rgb(255 255 255 / 0.85);
+  --l-btn-bg-hover: #ffffff;
+  --l-btn-ring: rgb(28 28 26 / 0.12);
+  --l-section: radial-gradient(46rem 30rem at 75% 45%, rgb(255 222 170 / 0.35), transparent 70%), linear-gradient(180deg, #f1ede3, #ebe6d8);
+  --l-section-solid: #eeeadf;
+  --l-card: rgb(255 255 255 / 0.75);
+  --l-card-ring: rgb(28 28 26 / 0.08);
+  --g-a: #ffffff; --g-b: #f2ede1; --g-c: #ddd3bd; --g-line: #1f5fff; --g-shade: #b5a888; --g-dot: #1f5fff; --g-region: #a86c00; --g-uz: #1f5fff;
+  --g-land: #e4dac4; --g-land-line: #c2b393; --g-region-fill: rgb(214 160 60 / 0.35);
+  --h-sky: linear-gradient(180deg, #f4f1e7 0%, #f1ead9 45%, #f2dfbd 78%, #efcf98 100%);
+  --h-sun-a: #fff6dc; --h-sun-b: #f3cd84;
+  --h-far-a: #d8cfb9; --h-far-b: #cbbfa4;
+  --h-near-a: #bfb294; --h-near-b: #a99c7e;
+  --h-sil: #4a4438; --h-ground: #4a4438; --h-lit: #f3cd84;
+  --h-train: #fbfaf5; --h-train-line: #1c1c1a; --h-plane: #1c1c1a; --h-path: #1c1c1a;
+}
+.l-text { color: rgb(var(--l-text)); }
+.l-sub { color: rgb(var(--l-sub)); }
+.l-muted { color: rgb(var(--l-muted)); }
+.l-eyebrow { color: var(--l-eyebrow); }
+.l-gold { color: var(--l-gold); }
+.l-grad-text { background-image: var(--l-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.l-btn-ghost {
+  background: var(--l-btn-bg); box-shadow: inset 0 0 0 1px var(--l-btn-ring); color: rgb(var(--l-text));
+  backdrop-filter: blur(12px); transition: background-color 0.2s ease;
+}
+.l-btn-ghost:hover { background: var(--l-btn-bg-hover); }
+.l-section { background: var(--l-section); }
+.l-card { background: var(--l-card); box-shadow: inset 0 0 0 1px var(--l-card-ring); }
+.l-fade-y { background: linear-gradient(180deg, rgb(var(--l-fade) / 0.7), rgb(var(--l-fade) / 0.35) 50%, rgb(var(--l-fade))); }
+.l-fade-x { background: linear-gradient(90deg, rgb(var(--l-fade) / 0.92), rgb(var(--l-fade) / 0.5) 50%, transparent); }
+.l-fade-bg { background: rgb(var(--l-fade)); }
+.l-horizon { background: var(--h-sky); }
+.l-lines { color: rgb(var(--l-text) / 0.22); }
+:root[data-theme="light"] .tport-intro { background: rgb(var(--l-fade)); }
+
+/* Logo lockup: the mark's white swoosh and arrow become deep navy on the light theme. */
+:root[data-theme="light"] { --logo-sw-1: #0e1838; --logo-sw-2: #1a2b5c; --logo-sw-3: #2d4a9a; }
+
+/* The supplied AI artwork cycles gently through cyan, violet, rose, gold and green. */
+.tai-original-art { filter: none; }
+.tai-logo { transform-origin: 50% 65%; }
+.tai-neural-motion { display: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .tai-original-art { animation: tai-colour-cycle 24s linear infinite; }
+  .tai-logo:not([data-still]) { animation: tai-wave 7s ease-in-out infinite; }
+  .tai-neural-motion { display: inline; }
+  .tai-neural-motion circle { filter: drop-shadow(0 0 2px #8beaff); }
+}
+@keyframes tai-wave {
+  0%, 100% { transform: translateY(0) rotate(-2deg); }
+  50% { transform: translateY(-4px) rotate(2deg); }
+}
+@keyframes tai-colour-cycle {
+  from { filter: hue-rotate(0deg); }
+  to { filter: hue-rotate(360deg); }
 }

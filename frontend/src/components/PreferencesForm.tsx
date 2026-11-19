@@ -50,7 +50,7 @@ export function PreferencesForm() {
 
   const active = (m: Mode) => prefs.modes.length === 0 || prefs.modes.includes(m);
   return (
-    <form key={prefs.updated_at ?? "defaults"} onSubmit={submit} className="mt-4 space-y-4 rounded-2xl border border-line bg-surface p-4">
+    <form key={prefs.updated_at ?? "defaults"} onSubmit={submit} className="mt-4 space-y-4 rounded-3xl bg-surface shadow-soft p-4">
       <fieldset>
         <legend className="text-sm font-medium">Transport modes to search</legend>
         <div className="mt-2 flex flex-wrap gap-3">
@@ -76,7 +76,7 @@ export function PreferencesForm() {
       <div className="flex flex-wrap gap-4">
         <label htmlFor={`${id}-sort`} className="flex flex-col gap-1 text-sm">
           Sort results by
-          <select id={`${id}-sort`} name="sort" defaultValue={prefs.sort} className="rounded-lg border border-line bg-navy px-3 py-2 text-ink">
+          <select id={`${id}-sort`} name="sort" defaultValue={prefs.sort} className="rounded-xl border border-line bg-card px-3 py-2 text-ink">
             {(Object.keys(SORT_LABEL) as SortKey[]).map((k) => (
               <option key={k} value={k}>{SORT_LABEL[k]}</option>
             ))}
@@ -84,7 +84,7 @@ export function PreferencesForm() {
         </label>
         <label htmlFor={`${id}-changes`} className="flex flex-col gap-1 text-sm">
           Changes
-          <select id={`${id}-changes`} name="max_transfers" defaultValue={String(prefs.max_transfers)} className="rounded-lg border border-line bg-navy px-3 py-2 text-ink">
+          <select id={`${id}-changes`} name="max_transfers" defaultValue={String(prefs.max_transfers)} className="rounded-xl border border-line bg-card px-3 py-2 text-ink">
             <option value="0">Direct only</option>
             <option value="1">Up to 1 change</option>
             <option value="2">Up to 2 changes</option>
@@ -94,7 +94,7 @@ export function PreferencesForm() {
           Max price (UZS)
           <input id={`${id}-price`} name="max_price" type="number" inputMode="numeric" min={1000} step={1000}
             defaultValue={prefs.max_price ? String(Number(prefs.max_price)) : ""} placeholder="Any"
-            className="w-40 rounded-lg border border-line bg-navy px-3 py-2 text-ink" />
+            className="w-40 rounded-xl border border-line bg-card px-3 py-2 text-ink" />
         </label>
       </div>
       <div className="flex flex-wrap items-center gap-3">

@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import { Dashboard } from "@/components/Dashboard";
 
-export const metadata: Metadata = { title: "Your dashboard" };
+export const metadata: Metadata = { title: "My Trips" };
 
 export default function DashboardPage() {
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+    <div className="mx-auto max-w-[80rem] px-3 py-4 sm:px-6 lg:px-0 lg:py-0">
       <Dashboard />
     </div>
   );

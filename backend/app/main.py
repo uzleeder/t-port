@@ -41,6 +41,7 @@ from app.providers.stored import StoredTimetableAdapter
 from app.services.auth import AuthService
 from app.services.catalog import LocationCatalog
 from app.services.freshness import FreshnessPolicy, SourcePolicy
+from app.services.images import MAX_AVATAR_BYTES
 from app.services.provider_health import assess_provider, overall, prometheus_metrics
 from app.services.ratelimit import SharedRateLimiter, limiter_key
 from app.services.search import SearchService
@@ -238,7 +239,9 @@ def create_app(
                 length = int(request.headers.get("content-length") or 0)
             except ValueError:
                 length = 0
-            if length > 64 * 1024:
+            # Profile photos are the one larger body; that route also caps what it actually reads.
+            limit = MAX_AVATAR_BYTES if path == "/api/v1/me/avatar" else 64 * 1024
+            if length > limit:
                 return JSONResponse(error_body("payload_too_large", "Request body too large."), 413)
             ip = request.client.host if request.client else "unknown"
             limited = over_limit(ip, "api", settings.rate_limit_per_minute)

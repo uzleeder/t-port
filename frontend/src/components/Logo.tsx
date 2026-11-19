@@ -26,15 +26,16 @@ function MarkShapes({ id }: { id: string }) {
           <stop offset="1" stopColor="#1D55DE" />
         </linearGradient>
         <linearGradient id={`${id}-swoosh`} x1="490" y1="116" x2="220" y2="340" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#FFFFFF" />
-          <stop offset="0.7" stopColor="#F2F8FF" />
-          <stop offset="1" stopColor="#BFDDFF" />
+          {/* The white swoosh and arrow turn navy on light backgrounds (see --logo-* in globals.css). */}
+          <stop offset="0" style={{ stopColor: "var(--logo-sw-1, #ffffff)" }} />
+          <stop offset="0.7" style={{ stopColor: "var(--logo-sw-2, #f2f8ff)" }} />
+          <stop offset="1" style={{ stopColor: "var(--logo-sw-3, #bfddff)" }} />
         </linearGradient>
       </defs>
       <path d={BAR} fill={`url(#${id}-bar)`} />
       <path d={STEM} fill={`url(#${id}-stem)`} />
       <path d={SWOOSH} fill={`url(#${id}-swoosh)`} />
-      <path d={PLANE} fill="#FFFFFF" />
+      <path d={PLANE} style={{ fill: "var(--logo-sw-1, #ffffff)" }} />
     </>
   );
 }
@@ -42,7 +43,7 @@ function MarkShapes({ id }: { id: string }) {
 export function TPortMark({ className = "h-8 w-8" }: { className?: string }) {
   const id = useId().replace(/:/g, "");
   return (
-    <svg viewBox="40 40 580 470" className={className} aria-hidden="true">
+    <svg viewBox="40 40 580 470" className={className} style={{ aspectRatio: "580 / 470" }} aria-hidden="true">
       <MarkShapes id={id} />
     </svg>
   );
@@ -100,18 +101,19 @@ export function OrbitMark({ className = "h-24 w-24" }: { className?: string }) {
 export function Logo({ size = "md" }: { size?: "md" | "lg" }) {
   const lg = size === "lg";
   return (
-    <Link href="/" aria-label="T-Port home" className="flex items-center gap-3">
-      {lg ? <OrbitMark className="h-20 w-24 sm:h-24 sm:w-28" /> : <TPortMark className="h-9 w-10" />}
-      <span className="flex flex-col leading-none">
-        <span className={`font-extrabold tracking-wide ${lg ? "text-4xl sm:text-5xl" : "text-xl"}`}>
-          <span className="bg-gradient-to-r from-[#2FD0FF] to-[#3D8BFF] bg-clip-text text-transparent">T-</span>
-          PORT
-        </span>
-        {lg && (
-          <span className="mt-2 text-[0.6rem] font-semibold tracking-[0.28em] text-ink/85 sm:text-xs">
-            THE GLOBAL TRANSIT GATEWAY
-          </span>
-        )}
+    <Link
+      href="/"
+      aria-label="T-Port home"
+      className={`flex shrink-0 items-center whitespace-nowrap rounded-full ${lg ? "gap-3" : "gap-2 pl-1.5"}`}
+    >
+      {/* Built-in lockup: the mark sits directly beside the wordmark, with no badge behind it. */}
+      <TPortMark className={lg ? "h-12 w-auto" : "h-8 w-auto"} />
+      <span
+        className={`bg-gradient-to-r from-[#1fa8ff] to-[#1f5fff] bg-clip-text font-extrabold tracking-[0.06em] text-transparent ${
+          lg ? "text-3xl" : "text-[1.35rem] leading-none max-[439px]:sr-only"
+        }`}
+      >
+        T-PORT
       </span>
     </Link>
   );

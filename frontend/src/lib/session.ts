@@ -8,6 +8,8 @@ export interface User {
   email: string;
   display_name: string | null;
   created_at: string;
+  /** The user's own profile photo (changes when the photo does), or null. */
+  avatar_url: string | null;
 }
 
 export interface Me {
@@ -64,8 +66,11 @@ function fetchMe(): Promise<MeState> {
   return promise;
 }
 
-/** Current account state; `retry` refetches after an error. */
-export function useMe(): [MeState, () => void] {
+/**
+ * Current account state; `retry` refetches after an error. With `keepPrevious`, a signed-in view
+ * keeps showing the last known account while it refreshes (no flash of "loading" after an edit).
+ */
+export function useMe({ keepPrevious = false }: { keepPrevious?: boolean } = {}): [MeState, () => void] {
   const v = useSyncExternalStore(subscribe, () => version, () => 0);
   const [state, setState] = useState<{ v: number; s: MeState }>({ v: -1, s: { status: "loading" } });
 
@@ -77,5 +82,6 @@ export function useMe(): [MeState, () => void] {
     };
   }, [v]);
 
-  return [state.v === v ? state.s : { status: "loading" }, notifySessionChanged];
+  if (state.v === v) return [state.s, notifySessionChanged];
+  return [keepPrevious && state.s.status === "ready" ? state.s : { status: "loading" }, notifySessionChanged];
 }

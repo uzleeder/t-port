@@ -8,7 +8,7 @@ test("search, inspect, save and manage a journey", async ({ page }) => {
   const email = `e2e-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`;
 
   await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1 })).toContainText("One Destination");
+  await expect(page.getByRole("heading", { level: 1 })).toContainText("Every Way to Get There");
   await expect(page.getByRole("note").filter({ hasText: "Demonstration data" })).toBeVisible();
 
   // Location autocomplete accepts local spellings.
@@ -50,8 +50,8 @@ test("search, inspect, save and manage a journey", async ({ page }) => {
   await page.getByRole("link", { name: "Sign in to save" }).click();
   await page.getByRole("link", { name: "Create an account" }).click();
   await expect(page.getByRole("heading", { name: "Create account" })).toBeVisible();
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill("correct horse battery 9");
+  await page.getByLabel("Email").locator("visible=true").fill(email);
+  await page.getByLabel("Password").locator("visible=true").fill("correct horse battery 9");
   await page.getByRole("button", { name: "Create account" }).click();
   // ?next= is preserved through sign-in -> register, so we land back on the journey.
   await expect(page).toHaveURL(journeyUrl);
@@ -64,12 +64,12 @@ test("search, inspect, save and manage a journey", async ({ page }) => {
   await expect(nav.getByRole("link", { name: "Sign in" })).toBeVisible();
   await nav.getByRole("link", { name: "Sign in" }).click();
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill("correct horse battery 9");
+  await page.getByLabel("Email").locator("visible=true").fill(email);
+  await page.getByLabel("Password").locator("visible=true").fill("correct horse battery 9");
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/dashboard/);
   await expect(page.getByRole("heading", { name: /Saved journeys/ })).toContainText("(1)");
-  await expect(page.getByRole("listitem").getByText("Tashkent → Bukhara")).toBeVisible();
+  await expect(page.getByRole("region", { name: /Saved journeys/ }).getByText("Tashkent → Bukhara")).toBeVisible();
 
   // Remove with confirmation.
   await page.getByRole("button", { name: /Remove saved journey/ }).click();
@@ -81,10 +81,9 @@ test("search, inspect, save and manage a journey", async ({ page }) => {
 });
 
 test("assistant turns a sentence into real search results", async ({ page }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: /describe your trip/i }).click();
-  await page.getByLabel("Describe your trip").fill("Cheapest way from Tashkent to Samarkand tomorrow");
-  await page.getByRole("button", { name: "Ask" }).click();
+  await page.goto("/planner");
+  await page.getByLabel("Ask T-AI").fill("Cheapest way from Tashkent to Samarkand tomorrow");
+  await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText(/I found \d+ option/)).toBeVisible();
   await expect(page.getByText(/demonstration data/).first()).toBeVisible();
   await page.getByRole("link", { name: /See all .* results/ }).click();
@@ -128,6 +127,6 @@ test("demo journeys have no booking action", async ({ page }) => {
   await expect(first.getByText("Not bookable through T-Port")).toBeVisible();
   await first.getByRole("link", { name: /View details/ }).click();
   await expect(page.getByText("Demo journeys cannot be booked.")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Book with the operator" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Go to provider" })).toHaveCount(0);
   await expect(page.getByText(/Source:\s*T-Port Demo Dataset/).first()).toBeVisible();
 });

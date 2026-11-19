@@ -25,6 +25,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -360,6 +361,22 @@ class AIRequest(Base):
     output_tokens: Mapped[int | None] = mapped_column(Integer)
     error_code: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class UserAvatar(Base):
+    """A user's profile photo, shown only to its owner. A small square image (see app.services.images)."""
+
+    __tablename__ = "user_avatars"
+    __table_args__ = (
+        CheckConstraint(
+            "content_type in ('image/png','image/jpeg','image/webp')", name="ck_user_avatars_content_type"
+        ),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    content_type: Mapped[str] = mapped_column(String(16))
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
 class UserPreferences(Base):
