@@ -54,12 +54,12 @@ test("search, compare, save, reopen and hand off to the operator", async ({ page
   await testCard.getByRole("link", { name: /View details/ }).click();
   await expect(page).toHaveURL(/\/journeys\/synthbook~/);
   const journeyUrl = page.url();
-  await expect(page.getByRole("link", { name: "Book with the operator" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Go to provider" })).toBeVisible();
   await page.getByRole("link", { name: "Sign in to save" }).click();
   await page.getByRole("link", { name: "Create an account" }).click();
   await expect(page.getByRole("heading", { name: "Create account" })).toBeVisible();
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill("correct horse battery 9");
+  await page.getByLabel("Email").locator("visible=true").fill(email);
+  await page.getByLabel("Password").locator("visible=true").fill("correct horse battery 9");
   await page.getByRole("button", { name: "Create account" }).click();
   await expect(page).toHaveURL(journeyUrl);
   await page.getByRole("button", { name: "Save journey" }).click();
@@ -69,11 +69,11 @@ test("search, compare, save, reopen and hand off to the operator", async ({ page
   await page.goto("/dashboard");
   const saved = page.getByRole("region", { name: /Saved journeys/ }).getByRole("listitem").first();
   await expect(saved).toContainText("Tashkent → Namangan");
-  await saved.getByRole("link", { name: "View current" }).click();
+  await saved.getByRole("link", { name: "View trip" }).click();
   await expect(page).toHaveURL(journeyUrl);
 
   // Booking hand-off: explained first, then the operator's own site.
-  await page.getByRole("link", { name: "Book with the operator" }).click();
+  await page.getByRole("link", { name: "Go to provider" }).click();
   await expect(page.getByRole("heading", { name: "You're leaving T-Port" })).toBeVisible();
   await expect(page.getByText("booking.synthrail.test").first()).toBeVisible();
   await expect(page.getByText(/T-Port does not sell tickets/)).toBeVisible();
@@ -84,10 +84,9 @@ test("search, compare, save, reopen and hand off to the operator", async ({ page
 });
 
 test("the assistant understands arrival deadlines and changes", async ({ page }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: /describe your trip/i }).click();
-  await page.getByLabel("Describe your trip").fill("Tashkent to Bukhara tomorrow, arrive by 6 pm, fewest changes");
-  await page.getByRole("button", { name: "Ask" }).click();
+  await page.goto("/planner");
+  await page.getByLabel("Ask T-AI").fill("Tashkent to Bukhara tomorrow, arrive by 6 pm, fewest changes");
+  await page.getByRole("button", { name: "Send" }).click();
   const understood = page.getByRole("list", { name: "Understood as" });
   await expect(understood).toContainText("arrive by 18:00");
   await expect(understood).toContainText("fewest changes");
@@ -95,4 +94,21 @@ test("the assistant understands arrival deadlines and changes", async ({ page })
   await page.getByRole("link", { name: /See all .* results with filters/ }).click();
   await expect(page).toHaveURL(/arrive_before=18%3A00/);
   await expect(page.getByLabel("Arrive by")).toHaveValue("18:00");
+});
+
+test("T-AI turns a request into recommended, cheapest, fastest and most direct picks", async ({ page }) => {
+  await page.goto("/planner");
+  await expect(page.getByRole("heading", { name: /T-AI/, level: 1 })).toBeVisible();
+  await page.getByRole("button", { name: /Find the cheapest route from Tashkent to Samarkand/ }).click();
+  const chat = page.getByRole("region", { name: "Conversation with T-AI" });
+  await expect(chat.getByRole("link", { name: "Select route" })).toHaveCount(4);
+  for (const name of ["Recommended", "Cheapest", "Fastest", "Fewest changes"]) {
+    await expect(chat.getByRole("tab", { name })).toBeVisible();
+  }
+  await expect(chat.getByRole("region", { name: "T-AI insight" })).toContainText(/option\(s\)/);
+  await chat.getByRole("tab", { name: /All options/ }).click();
+  await expect(chat.getByRole("link", { name: "Select route" })).toHaveCount(0);
+  await chat.getByRole("tab", { name: "Recommended" }).click();
+  await chat.getByRole("link", { name: "Select route" }).first().click();
+  await expect(page).toHaveURL(/\/journeys\//);
 });

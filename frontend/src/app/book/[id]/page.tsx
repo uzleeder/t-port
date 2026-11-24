@@ -80,7 +80,7 @@ async function Handoff({ params }: { params: PageProps<"/book/[id]">["params"] }
         <strong className="break-all">{info.booking_host}</strong>. T-Port does not sell tickets, take payments or
         see what you book.
       </p>
-      <dl className="grid gap-3 rounded-2xl border border-line bg-surface p-4 text-sm sm:grid-cols-2">
+      <dl className="grid gap-3 rounded-3xl bg-surface shadow-soft p-4 text-sm sm:grid-cols-2">
         <div>
           <dt className="text-muted">Price shown on T-Port</dt>
           <dd className="mt-1 text-lg font-semibold text-gold tabular-nums">

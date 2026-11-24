@@ -1,19 +1,32 @@
 import Link from "next/link";
-import { Logo } from "./Logo";
+import { Suspense } from "react";
 import { AccountNav } from "./AccountNav";
+import { HeaderNav, HeaderTagline } from "./BottomNav";
+import { HeaderScroll } from "./HeaderScroll";
+import { LanguageSelect } from "./LanguageSelect";
+import { T } from "./T";
+import type { Key } from "@/lib/i18n";
+import { Logo } from "./Logo";
+import { ThemeToggle } from "./ThemeToggle";
 
 export function SiteHeader() {
   return (
-    <header className="border-b border-line/60 bg-navy/80 backdrop-blur">
+    <header className="sticky top-0 z-20 px-3 pt-3 sm:px-6">
       <nav
         aria-label="Main"
-        className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3 sm:px-6"
+        className="relative mx-auto flex max-w-[94rem] items-center gap-3 rounded-full bg-surface py-2 pl-2 pr-2 shadow-soft"
       >
+        <HeaderScroll />
         <Logo />
-        <Link href="/search" className="hidden text-sm text-muted hover:text-ink sm:inline">
-          Search
-        </Link>
-        <div className="ml-auto">
+        <Suspense fallback={null}>
+          <HeaderTagline />
+        </Suspense>
+        <div className="ml-auto flex items-center gap-2">
+          {/* The active link depends on the current path, which is only known at request time. */}
+          <Suspense fallback={null}>
+            <HeaderNav />
+          </Suspense>
+          <ThemeToggle />
           <AccountNav />
         </div>
       </nav>
@@ -21,16 +34,76 @@ export function SiteHeader() {
   );
 }
 
+const FOOTER_PRODUCT: [string, Key][] = [
+  ["/search", "footer.search"],
+  ["/explore", "footer.explore"],
+  ["/planner", "footer.ai"],
+  ["/compare", "footer.compare"],
+  ["/dashboard", "footer.trips"],
+];
+const FOOTER_COMPANY: [string, Key][] = [
+  ["/#about", "footer.about"],
+  ["/#how-it-works", "footer.help"],
+  ["/privacy", "footer.privacy"],
+  ["/credits", "footer.credits"],
+];
+const FOOTER_MODES: Key[] = ["search.train", "search.bus", "search.flight", "search.taxi"];
+
 export function SiteFooter() {
   return (
-    <footer className="mt-auto border-t border-line/60">
-      <div className="mx-auto flex max-w-6xl flex-col gap-2 px-4 py-6 text-sm text-muted sm:flex-row sm:justify-between sm:px-6">
-        <p>
-          <span className="font-semibold text-ink">T-Port</span> · One Destination. Every Way to
-          Get There.
-        </p>
-        <p>Phase 1 pilot · Uzbekistan · Planning information only — no ticket sales.</p>
+    <footer className="mt-auto border-t border-line">
+      <div className="mx-auto grid max-w-[94rem] gap-10 px-5 py-12 sm:grid-cols-2 sm:px-10 lg:grid-cols-[1.4fr_1fr_1fr_1fr]">
+        <div className="space-y-4">
+          <Logo />
+          <p className="max-w-xs text-sm text-muted">
+            <T k="slogan" />
+          </p>
+          <LanguageSelect />
+        </div>
+        <FooterList title="footer.product" items={FOOTER_PRODUCT} />
+        <div>
+          <h2 className="text-sm font-semibold">
+            <T k="footer.modes" />
+          </h2>
+          <ul className="mt-3 space-y-2 text-sm text-muted">
+            {FOOTER_MODES.map((k) => (
+              <li key={k}>
+                <T k={k} />
+              </li>
+            ))}
+          </ul>
+        </div>
+        <FooterList title="footer.company" items={FOOTER_COMPANY} />
+      </div>
+      <div className="border-t border-line">
+        <div className="mx-auto flex max-w-[94rem] flex-col gap-1 px-5 py-5 text-xs text-muted sm:flex-row sm:flex-wrap sm:justify-between sm:px-10">
+          <p>
+            <T k="footer.rights" /> <T k="footer.by" /> <T k="vision.title" />
+          </p>
+          <p>
+            <T k="footer.pilot" />
+          </p>
+        </div>
       </div>
     </footer>
+  );
+}
+
+function FooterList({ title, items }: { title: Key; items: [string, Key][] }) {
+  return (
+    <div>
+      <h2 className="text-sm font-semibold">
+        <T k={title} />
+      </h2>
+      <ul className="mt-3 space-y-2 text-sm">
+        {items.map(([href, k]) => (
+          <li key={href}>
+            <Link href={href} className="text-muted hover:text-ink">
+              <T k={k} />
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

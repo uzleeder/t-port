@@ -11,7 +11,7 @@ export function AuthShell({
 }) {
   return (
     <div className="mx-auto max-w-md px-4 py-12 sm:py-16">
-      <div className="rounded-2xl border border-line bg-surface p-6 sm:p-8">
+      <div className="rounded-3xl bg-surface shadow-soft p-6 sm:p-8">
         <h1 className="text-2xl font-bold">{title}</h1>
         <p className="mt-1 mb-6 text-muted">{subtitle}</p>
         {children}

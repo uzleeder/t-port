@@ -17,10 +17,11 @@ from sqlalchemy.orm import Session as DbSession
 from app.api.deps import Principal, get_db, require_csrf, require_principal
 from app.api.v1.routes import get_search
 from app.api.v1.schemas import JourneyOut, Page
-from app.core.errors import NotFound, RateLimited, ValidationFailed
+from app.core.errors import AppError, NotFound, RateLimited, ValidationFailed
 from app.db import models as m
 from app.db.repositories import (
     ActivityRepository,
+    AvatarRepository,
     PreferencesRepository,
     SavedJourneyRepository,
     SessionRepository,
@@ -29,6 +30,7 @@ from app.db.repositories import (
 from app.db.session import transaction
 from app.domain.models import TransportMode
 from app.services.auth import AuthService, Conflict, IssuedSession, Unauthorized
+from app.services.images import MAX_AVATAR_BYTES, InvalidImage, inspect_image
 from app.services.ratelimit import limiter_key
 from app.services.search import SearchService, SortKey
 
@@ -56,10 +58,20 @@ class UserOut(BaseModel):
     email: str
     display_name: str | None
     created_at: datetime
+    avatar_url: str | None = Field(
+        default=None, description="The signed-in user's own profile photo; the URL changes when it does."
+    )
 
     @classmethod
-    def of(cls, u: m.User) -> UserOut:
-        return cls(id=u.id, email=u.email, display_name=u.display_name, created_at=u.created_at)
+    def of(cls, u: m.User, avatar_at: datetime | None = None) -> UserOut:
+        url = f"/api/v1/me/avatar?v={int(avatar_at.timestamp())}" if avatar_at else None
+        return cls(
+            id=u.id, email=u.email, display_name=u.display_name, created_at=u.created_at, avatar_url=url
+        )
+
+
+def _user_out(db: DbSession, u: m.User) -> UserOut:
+    return UserOut.of(u, AvatarRepository(db).updated_at(u.id))
 
 
 class RecentSearchOut(BaseModel):
@@ -171,7 +183,7 @@ def login(
     issued = auth.issue_session(db, user, now)
     db.commit()
     _set_session_cookies(request, response, issued)
-    return AuthResponse(user=UserOut.of(user), session_expires_at=issued.expires_at)
+    return AuthResponse(user=_user_out(db, user), session_expires_at=issued.expires_at)
 
 
 @router.post("/auth/logout", status_code=204, tags=["auth"])
@@ -214,7 +226,7 @@ def me(
 ) -> MeResponse:
     recent = ActivityRepository(db).recent_searches(principal.user.id)
     return MeResponse(
-        user=UserOut.of(principal.user),
+        user=_user_out(db, principal.user),
         saved_count=SavedJourneyRepository(db).count_for_user(principal.user.id),
         recent_searches=[
             RecentSearchOut(
@@ -228,6 +240,107 @@ def me(
         ],
         session_expires_at=principal.session.expires_at,
     )
+
+
+# --- profile -----------------------------------------------------------------------------------
+class ProfileIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    display_name: str | None = Field(default=None, max_length=80, description="Empty clears it.")
+
+    @field_validator("display_name")
+    @classmethod
+    def _clean(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = " ".join(v.split())  # trims and collapses whitespace, drops tabs and newlines
+        if any(not ch.isprintable() for ch in v):
+            raise ValueError("Use letters, numbers and punctuation only.")
+        return v or None
+
+
+@router.patch("/me", response_model=UserOut, tags=["account"])
+def update_profile(
+    body: ProfileIn,
+    principal: Annotated[Principal, Depends(require_csrf)],
+    db: Annotated[DbSession, Depends(get_db)],
+) -> UserOut:
+    """Change the display name."""
+    user = db.merge(principal.user)
+    user.display_name = body.display_name
+    db.commit()
+    return _user_out(db, user)
+
+
+class PhotoTooLarge(AppError):
+    status_code = 413
+    code = "payload_too_large"
+
+
+# Like every /api response, never cached (personal data on shared devices); see app.main.
+_AVATAR_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'none'; sandbox",
+    "Content-Disposition": 'inline; filename="avatar"',
+}
+
+
+@router.put("/me/avatar", response_model=UserOut, tags=["account"])
+async def put_avatar(
+    request: Request,
+    principal: Annotated[Principal, Depends(require_csrf)],
+    db: Annotated[DbSession, Depends(get_db)],
+) -> UserOut:
+    """Upload a profile photo as the raw request body (PNG, JPEG or WebP, up to 1 MB)."""
+    too_large = PhotoTooLarge("The photo is too large. Choose one under 1 MB.")
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_AVATAR_BYTES:
+        raise too_large
+    data = bytearray()
+    async for chunk in request.stream():
+        data.extend(chunk)
+        if len(data) > MAX_AVATAR_BYTES:
+            raise too_large
+    try:
+        info = inspect_image(bytes(data))
+    except InvalidImage as e:
+        raise ValidationFailed(str(e)) from None
+    declared_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if declared_type != info.content_type:
+        raise ValidationFailed("The file's type does not match its contents.")
+
+    def write() -> UserOut:
+        now = request.app.state.clock.now()
+        AvatarRepository(db).put(principal.user.id, info.content_type, bytes(data), now)
+        db.commit()
+        return _user_out(db, principal.user)
+
+    return await run_in_threadpool(write)
+
+
+@router.get(
+    "/me/avatar",
+    tags=["account"],
+    response_class=Response,
+    responses={200: {"content": {"image/webp": {}, "image/png": {}, "image/jpeg": {}}}},
+)
+def get_avatar(
+    principal: Annotated[Principal, Depends(require_principal)], db: Annotated[DbSession, Depends(get_db)]
+) -> Response:
+    """The signed-in user's own profile photo."""
+    row = AvatarRepository(db).get(principal.user.id)
+    if row is None:
+        raise NotFound("No profile photo.")
+    return Response(row.data, media_type=row.content_type, headers=_AVATAR_HEADERS)
+
+
+@router.delete("/me/avatar", status_code=204, tags=["account"])
+def delete_avatar(
+    principal: Annotated[Principal, Depends(require_csrf)], db: Annotated[DbSession, Depends(get_db)]
+) -> Response:
+    """Remove the profile photo (no-op when there is none)."""
+    AvatarRepository(db).delete(principal.user.id)
+    db.commit()
+    return Response(status_code=204)
 
 
 # --- preferences -------------------------------------------------------------------------------
